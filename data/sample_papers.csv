@@ -1,0 +1,6 @@
+title,authors,year,resource_type,url,doi,journal
+"Machine Learning in Mineral Exploration: A Review","John Smith;Jane Doe",2023,paper,https://arxiv.org/abs/2301.12345,,Journal of Geoscience and Mining
+"Deep Learning for Geophysical Data Analysis","Alice Johnson;Bob Williams",2022,paper,,10.1000/xyz123,
+"Predictive Modeling of Ore Deposits Using Random Forests","Carol Martinez",2021,thesis,https://example.edu/thesis/123456,,
+"Neural Networks for Geological Pattern Recognition","David Lee;Emma Brown;Frank Chen",2023,paper,https://doi.org/10.1016/j.example.2023.01.001,,Computers & Geosciences
+"A Technical Report on AI-Driven Mineral Prospectivity Mapping","Government Geological Survey",2022,report,https://example.gov/reports/2022/ai-mineral-mapping.pdf,,
