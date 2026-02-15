@@ -17,6 +17,7 @@ class AccessibilityStatus(str, Enum):
     PAYWALLED = "paywalled"
     NOT_FOUND = "not_found"
     ERROR = "error"
+    HUMAN_ERROR = "human_error"
 
 
 class ResourceType(str, Enum):
@@ -59,6 +60,14 @@ class Paper:
     requires_authentication: bool = False
     authentication_service: Optional[str] = None  # e.g., "ResearchGate", "IEEE", etc.
     
+    # Download workflow fields
+    section_path: Optional[str] = None  # Full section hierarchy from README (e.g., "Prospectivity/Oceania/Australia")
+    final_resolved_url: Optional[str] = None  # Final URL after following redirects
+    download_success: bool = False  # Whether download succeeded
+    unseen_tag: bool = False  # Whether paper was tagged [UNSEEN] in README
+    duplicate_of: Optional[int] = None  # CSV row ID of first occurrence if duplicate
+    url_resolvable: bool = False  # Whether URL resolves successfully
+    
     # Local storage
     local_file_path: Optional[str] = None
     
@@ -94,6 +103,12 @@ class Paper:
             "download_url": self.download_url,
             "requires_authentication": self.requires_authentication,
             "authentication_service": self.authentication_service,
+            "section_path": self.section_path,
+            "final_resolved_url": self.final_resolved_url,
+            "download_success": self.download_success,
+            "unseen_tag": self.unseen_tag,
+            "duplicate_of": self.duplicate_of,
+            "url_resolvable": self.url_resolvable,
             "local_file_path": self.local_file_path,
             "abstract": self.abstract,
             "keywords": self.keywords,

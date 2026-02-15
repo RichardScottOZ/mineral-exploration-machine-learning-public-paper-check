@@ -211,3 +211,8 @@ __marimo__/
 papers_export.*
 example_papers.db
 downloads/
+
+# Ralph execution
+ralph-execution.log
+.kiro/lisa-draft.md
+.kiro/lisa-*.md
