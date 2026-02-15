@@ -26,9 +26,9 @@
 
 ## Medium Priority
 
-- [ ] Add `--aggressive` flag to existing `paper-checker scan` command (default off for backward compat, on for download)
-- [ ] Handle edge case: same paper in multiple sections creates separate CSV rows, each with correct section_path, all flagged via `duplicate_of`
-- [ ] Add progress summary at end of run: total papers found, checked, public, restricted, downloaded, failed — printed to stdout
+- [x] Add `--aggressive` flag to existing `paper-checker scan` command (default off for backward compat, on for download)
+- [x] Handle edge case: same paper in multiple sections creates separate CSV rows, each with correct section_path, all flagged via `duplicate_of`
+- [x] Add progress summary at end of run: total papers found, checked, public, restricted, downloaded, failed — printed to stdout
 - [ ] **HARD STOP** — Review before continuing to low priority
 
 ## Low Priority / Nice-to-Have

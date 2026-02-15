@@ -39,7 +39,8 @@ def main():
 )
 @click.option("--check/--no-check", default=False, help="Also check accessibility after importing")
 @click.option("--headless/--no-headless", default=True, help="Run browser in headless mode")
-def scan(db, repo, check, headless):
+@click.option("--aggressive/--no-aggressive", default=False, help="Use aggressive link parsing (default: off for backward compatibility)")
+def scan(db, repo, check, headless, aggressive):
     """Scan a GitHub repository README for paper/report/thesis links and import them.
 
     By default scans the mineral-exploration-machine-learning repository:
@@ -54,7 +55,7 @@ def scan(db, repo, check, headless):
     click.echo(f"Scanning https://github.com/{owner}/{name} ...")
 
     try:
-        papers = scan_repo(owner=owner, repo=name)
+        papers = scan_repo(owner=owner, repo=name, aggressive=aggressive)
     except RuntimeError as exc:
         click.echo(f"Error: {exc}", err=True)
         sys.exit(1)
