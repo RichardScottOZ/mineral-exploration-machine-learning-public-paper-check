@@ -13,7 +13,7 @@ from urllib.parse import urlparse
 
 import requests
 
-from paper_checker.models import Paper, ResourceType
+from paper_checker.models import Paper, ResourceType, AccessibilityStatus
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +69,26 @@ ACADEMIC_URL_PATTERNS = (
     "geoscan.nrcan.gc.ca/",
 )
 
+# Non-document URL patterns to exclude (datasets, repos, videos, blogs, notebooks, web services, portals)
+NON_DOCUMENT_URL_PATTERNS = (
+    "youtube.com/",
+    "youtu.be/",
+    "medium.com/",
+    "colab.research.google.com/",
+    "zenodo.org/record/",  # datasets
+    "figshare.com/articles/dataset/",
+    "data.gov",
+    "data.gov.au",
+    "portal.",  # data portals
+    "viewer.",  # map viewers
+    "wms?",  # WMS endpoints
+    "wfs?",  # WFS endpoints
+    "api.",  # API endpoints
+    "/api/",
+    "swagger",
+    "openapi",
+)
+
 
 def _label_to_resource_type(label: str) -> ResourceType:
     """Map a link label to a ResourceType."""
@@ -86,6 +106,38 @@ def _is_academic_url(url: str) -> bool:
     """Return True if *url* points to a known academic publication site."""
     url_lower = url.lower()
     return any(pattern in url_lower for pattern in ACADEMIC_URL_PATTERNS)
+
+
+def _is_non_document_url(url: str) -> bool:
+    """Return True if *url* points to a non-document resource (dataset, video, blog, etc.)."""
+    url_lower = url.lower()
+    return any(pattern in url_lower for pattern in NON_DOCUMENT_URL_PATTERNS)
+
+
+def _is_github_repo(url: str) -> bool:
+    """
+    Return True if *url* is a GitHub repository (not a paper/report/thesis).
+    
+    GitHub URLs pointing to papers/reports are typically:
+    - releases with PDF attachments
+    - specific files ending in .pdf
+    - issues/discussions about papers
+    
+    Regular repo URLs (code) should be excluded unless explicitly labeled as paper/report/thesis.
+    """
+    if 'github.com' not in url.lower():
+        return False
+    
+    # If it's a PDF file, it's likely a paper
+    if url.endswith('.pdf'):
+        return False
+    
+    # If it's a release, might contain papers
+    if '/releases/' in url:
+        return False
+    
+    # Otherwise, it's probably just a code repo
+    return True
 
 
 def fetch_readme(
@@ -303,8 +355,9 @@ def _normalize_url(url: str, aggressive: bool = True) -> Optional[str]:
     url = url.strip().rstrip(',;>)')
     
     # Check for file:/// paths - these are human errors
+    # Return a special marker so caller can set HUMAN_ERROR status
     if url.startswith('file:///'):
-        return None
+        return 'file:///__HUMAN_ERROR__'
     
     # If aggressive mode and URL looks like it's missing protocol
     if aggressive:
@@ -343,7 +396,24 @@ def _extract_entries_from_line(
         label = m.group(1)
         raw_url = m.group(2)
         url = _normalize_url(raw_url, aggressive)
-        if not url or _is_anchor_link(url):
+        if not url:
+            continue
+        # Check for file:/// human error
+        if url == 'file:///__HUMAN_ERROR__':
+            paper = Paper(
+                title=_extract_parent_context(lines, idx)[0] or "Invalid file:/// URL",
+                url=raw_url,
+                resource_type=_label_to_resource_type(label),
+                keywords=[section] if section else [],
+                section_path=section_path,
+                accessibility_status=AccessibilityStatus.HUMAN_ERROR,
+            )
+            results.append(paper)
+            continue
+        # Skip non-document URLs
+        if _is_non_document_url(url):
+            continue
+        if _is_anchor_link(url):
             continue
         resource_type = _label_to_resource_type(label)
         title, parent_url = _extract_parent_context(lines, idx)
@@ -374,6 +444,21 @@ def _extract_entries_from_line(
             continue
         url = _normalize_url(raw_url, aggressive)
         if not url:
+            continue
+        # Check for file:/// human error
+        if url == 'file:///__HUMAN_ERROR__':
+            paper = Paper(
+                title=_extract_parent_context(lines, idx)[0] or "Invalid file:/// URL",
+                url=raw_url,
+                resource_type=_label_to_resource_type(label),
+                keywords=[section] if section else [],
+                section_path=section_path,
+                accessibility_status=AccessibilityStatus.HUMAN_ERROR,
+            )
+            results.append(paper)
+            continue
+        # Skip non-document URLs
+        if _is_non_document_url(url):
             continue
         resource_type = _label_to_resource_type(label)
         title, _ = _extract_parent_context(lines, idx)
@@ -406,8 +491,23 @@ def _extract_entries_from_line(
             url = _normalize_url(raw_url, aggressive)
             if not url:
                 continue
+            # Check for file:/// human error
+            if url == 'file:///__HUMAN_ERROR__':
+                paper = Paper(
+                    title=_extract_parent_context(lines, idx)[0] or "Invalid file:/// URL",
+                    url=raw_url,
+                    resource_type=ResourceType.THESIS,
+                    keywords=[section] if section else [],
+                    section_path=section_path,
+                    accessibility_status=AccessibilityStatus.HUMAN_ERROR,
+                )
+                results.append(paper)
+                continue
+            # Skip non-document URLs
+            if _is_non_document_url(url):
+                continue
             # Skip GitHub repo URLs (not academic papers)
-            if 'github.com' in url and not _is_academic_url(url):
+            if _is_github_repo(url):
                 continue
             # Try to extract a markdown-linked title (normal format)
             title_match = re.search(r'\[([^\]]+)\]\(\s*' + re.escape(raw_url), line)
@@ -479,7 +579,17 @@ def _extract_academic_urls(
         url = _normalize_url(raw_url, aggressive)
         if not url:
             continue
+        # Check for file:/// human error
+        if url == 'file:///__HUMAN_ERROR__':
+            # Don't add file:/// URLs from academic URL pattern - they should be caught by explicit patterns
+            continue
         if url in seen:
+            continue
+        # Skip non-document URLs
+        if _is_non_document_url(url):
+            continue
+        # Skip GitHub repos unless they're academic URLs
+        if _is_github_repo(url) and not _is_academic_url(url):
             continue
         if not _is_academic_url(url):
             continue
