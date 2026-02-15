@@ -457,6 +457,144 @@ class AccessibilityChecker:
         
         return None
     
+    async def download_paper(self, paper: Paper, output_dir: str) -> Paper:
+        """
+        Download paper to output directory.
+        
+        For direct PDF URLs, saves the file directly.
+        For landing pages, attempts to find PDF link on page and follow it.
+        Falls back to saving HTML if PDF not found.
+        
+        Creates section hierarchy subdirectories under output_dir.
+        Filename format: {id}_{ascii_truncated_title}.pdf (or .html)
+        
+        Args:
+            paper: Paper object to download
+            output_dir: Base output directory
+            
+        Returns:
+            Updated paper with download_success and local_file_path
+        """
+        import os
+        import re
+        from pathlib import Path
+        from unicodedata import normalize
+        
+        if not paper.url and not paper.final_resolved_url:
+            paper.download_success = False
+            return paper
+        
+        url = paper.final_resolved_url or paper.url
+        
+        if not self.browser:
+            await self._init_browser()
+        
+        try:
+            # Create section subdirectory
+            section_dir = Path(output_dir)
+            if paper.section_path:
+                # ASCII-ize section path components
+                section_parts = [self._ascii_ize(part) for part in paper.section_path.split('/')]
+                section_dir = section_dir / Path(*section_parts)
+            section_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Generate filename
+            title_truncated = paper.title[:80] if paper.title else "untitled"
+            title_ascii = self._ascii_ize(title_truncated)
+            # Remove invalid filename characters
+            title_clean = re.sub(r'[<>:"/\\|?*]', '_', title_ascii)
+            title_clean = re.sub(r'\s+', '_', title_clean)
+            
+            paper_id = paper.id or 0
+            
+            page = await self.browser.new_page()
+            
+            try:
+                # Check if URL is direct PDF
+                if url.lower().endswith('.pdf'):
+                    # Direct PDF download
+                    filename = f"{paper_id}_{title_clean}.pdf"
+                    filepath = section_dir / filename
+                    
+                    response = await page.goto(url, timeout=self.timeout)
+                    if response and response.status == 200:
+                        # Save PDF
+                        content = await response.body()
+                        with open(filepath, 'wb') as f:
+                            f.write(content)
+                        
+                        paper.local_file_path = str(filepath)
+                        paper.download_success = True
+                        return paper
+                else:
+                    # Landing page - try to find PDF link
+                    response = await page.goto(url, timeout=self.timeout, wait_until="domcontentloaded")
+                    
+                    if not response or response.status != 200:
+                        paper.download_success = False
+                        return paper
+                    
+                    # Wait for dynamic content
+                    await page.wait_for_timeout(2000)
+                    
+                    # Try to find PDF link
+                    pdf_url = await self._find_download_link_browser(page, url)
+                    
+                    if pdf_url:
+                        # Make absolute URL
+                        if not pdf_url.startswith('http'):
+                            from urllib.parse import urljoin
+                            pdf_url = urljoin(url, pdf_url)
+                        
+                        # Download PDF
+                        filename = f"{paper_id}_{title_clean}.pdf"
+                        filepath = section_dir / filename
+                        
+                        pdf_response = await page.goto(pdf_url, timeout=self.timeout)
+                        if pdf_response and pdf_response.status == 200:
+                            content = await pdf_response.body()
+                            with open(filepath, 'wb') as f:
+                                f.write(content)
+                            
+                            paper.local_file_path = str(filepath)
+                            paper.download_success = True
+                            return paper
+                    
+                    # Fallback: save HTML
+                    filename = f"{paper_id}_{title_clean}.html"
+                    filepath = section_dir / filename
+                    
+                    content = await page.content()
+                    with open(filepath, 'w', encoding='utf-8') as f:
+                        f.write(content)
+                    
+                    paper.local_file_path = str(filepath)
+                    paper.download_success = True
+                    return paper
+                    
+            finally:
+                await page.close()
+                
+        except Exception as e:
+            logger.error(f"Error downloading paper {paper.title}: {e}")
+            paper.download_success = False
+            return paper
+    
+    def _ascii_ize(self, text: str) -> str:
+        """
+        Convert unicode text to ASCII, replacing accented characters.
+        
+        Args:
+            text: Unicode text
+            
+        Returns:
+            ASCII text
+        """
+        # Normalize to NFD (decomposed form) then filter out combining marks
+        normalized = normalize('NFD', text)
+        ascii_text = ''.join(c for c in normalized if ord(c) < 128)
+        return ascii_text
+    
     async def _init_browser(self):
         """Initialize Playwright browser"""
         playwright = await async_playwright().start()
