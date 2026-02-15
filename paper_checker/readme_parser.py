@@ -158,8 +158,12 @@ def parse_readme(readme_text: str) -> List[Paper]:
 def _is_anchor_link(url: str) -> bool:
     """Check if a URL is a GitHub self-referencing anchor link (e.g. repo#section)."""
     parsed = urlparse(url)
+    # GitHub repo URLs have at most 2 path segments (/owner/repo); an anchor
+    # fragment on such a URL is a table-of-contents link, not an academic resource.
+    netloc = parsed.netloc.lower()
+    is_github = netloc == "github.com" or netloc.endswith(".github.com")
     return bool(parsed.fragment) and (
-        "github.com" in parsed.netloc
+        is_github
         and parsed.path.rstrip("/").count("/") <= 2
         and not re.search(r'\.(pdf|html|htm)$', parsed.path, re.IGNORECASE)
     )
@@ -219,8 +223,10 @@ def _extract_entries_from_line(
     if re.search(r'(?:thesis|theses|phd)', line, re.IGNORECASE) and not results:
         urls = re.findall(r'(https?://\S+)', line)
         for raw_url in urls:
-            # Clean markdown artifacts and trailing punctuation from URLs
-            url = re.sub(r'[\]\)>,;]+.*$', '', raw_url).rstrip(',')
+            # Clean markdown artifacts from URLs: strip from first ']' or ')' that
+            # indicates the end of a markdown construct
+            url = re.split(r'[\]\)],?', raw_url)[0]
+            url = url.rstrip(',;>')
             # Try to extract a markdown-linked title
             title_match = re.search(r'\[([^\]]+)\]\(' + re.escape(raw_url), line)
             if title_match:
