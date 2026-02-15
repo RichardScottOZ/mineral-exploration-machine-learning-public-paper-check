@@ -242,6 +242,8 @@ def _extract_entries_from_line(
         results.append(paper)
 
     # --- Pattern 2: [paper] -> url  or [paper]url  (broken/typo links) ---
+    # Matches both the arrow-style "[paper] -> url" and the typo variant
+    # "[paper]url" or "[paper] url" where parentheses are missing.
     noparen_pattern = re.compile(
         r'\[(' + '|'.join(re.escape(l) for l in RESOURCE_LABELS)
         + r')\]\s*(?:->\s*)?(https?://\S+)',
@@ -287,9 +289,9 @@ def _extract_entries_from_line(
             results.append(paper)
 
     # --- Pattern 4 & 5: Academic URLs not already captured ---
-    # Only run if the line was not already fully handled by patterns 1-3.
-    if not results:
-        _extract_academic_urls(line, lines, idx, section, results)
+    # Collect URLs already found by patterns 1-3 so we don't duplicate them.
+    seen = {p.url for p in results if p.url}
+    _extract_academic_urls(line, lines, idx, section, results, seen)
 
     return results
 
@@ -300,6 +302,7 @@ def _extract_academic_urls(
     idx: int,
     section: str,
     results: List[Paper],
+    seen: Optional[set] = None,
 ) -> None:
     """Detect academic paper URLs that are not wrapped in [paper]/[report]/[thesis] labels.
 
@@ -310,12 +313,17 @@ def _extract_academic_urls(
            known academic domain, e.g.
            ``* [GeoCoDa](https://www.researchgate.net/publication/...)``
     """
+    if seen is None:
+        seen = set()
+
     # Collect all URLs on the line
     for raw_url in re.findall(r'(https?://\S+)', line):
         # Clean markdown artifacts from URLs
         url = re.split(r'[\]\)],?', raw_url)[0]
         url = url.rstrip(',;>)')
 
+        if url in seen:
+            continue
         if not _is_academic_url(url):
             continue
         if _is_anchor_link(url):
@@ -332,7 +340,9 @@ def _extract_academic_urls(
             if title.lower().strip() in RESOURCE_LABELS:
                 continue
         else:
-            # Try extracting a title from "-> Title" after the URL
+            # Try extracting a title from "-> Title" after the URL.
+            # The title ends at a bracket (used for annotations like [includes model])
+            # or at end of line.
             arrow_match = re.search(
                 re.escape(raw_url) + r'\s*->\s*(.+?)(?:\s*\[|$)', line
             )
