@@ -4,7 +4,7 @@ Tests for the README parser module.
 
 import pytest
 
-from paper_checker.models import Paper, ResourceType
+from paper_checker.models import Paper, ResourceType, AccessibilityStatus
 from paper_checker.readme_parser import (
     parse_readme,
     _label_to_resource_type,
@@ -405,3 +405,133 @@ def test_parse_readme_multiple_academic_domains():
     assert any("nature.com" in u for u in urls)
     assert any("ieeexplore.ieee.org" in u for u in urls)
     assert any("springer.com" in u for u in urls)
+
+
+# ---------------------------------------------------------------------------
+# Tests for aggressive parsing patterns
+# ---------------------------------------------------------------------------
+
+
+def test_parse_readme_missing_https_prefix():
+    """Test parsing [paper](www.sciencedirect.com/...) with missing https://."""
+    readme = """\
+# Geochemistry
+* [paper](www.sciencedirect.com/science/article/pii/S0098300424000839)
+"""
+    papers = parse_readme(readme, aggressive=True)
+    assert len(papers) >= 1
+    # Should have at least one paper with the sciencedirect URL
+    assert any('sciencedirect.com/science/article/pii/S0098300424000839' in p.url for p in papers)
+    assert papers[0].resource_type == ResourceType.PAPER
+
+
+def test_parse_readme_double_parens():
+    """Test parsing [paper]((url)) with double parentheses."""
+    readme = """\
+# Deep Learning
+* [Project](https://github.com/example)
+\t* [paper]((https://arxiv.org/abs/2301.12345))
+"""
+    papers = parse_readme(readme, aggressive=True)
+    assert len(papers) == 1
+    assert papers[0].url == "https://arxiv.org/abs/2301.12345"
+    assert papers[0].resource_type == ResourceType.PAPER
+
+
+def test_parse_readme_unseen_tag():
+    """Test parsing [UNSEEN] tag detection."""
+    readme = """\
+# Prospectivity
+* [Project A](https://github.com/a)
+\t* [paper](https://arxiv.org/abs/1111) [UNSEEN]
+* [Project B](https://github.com/b)
+\t* [paper](https://arxiv.org/abs/2222)
+"""
+    papers = parse_readme(readme, aggressive=True)
+    assert len(papers) == 2
+    assert papers[0].unseen_tag is True
+    assert papers[1].unseen_tag is False
+
+
+def test_parse_readme_file_path_human_error():
+    """Test that file:/// paths are flagged as human error."""
+    readme = """\
+# Papers
+* [paper](file:///home/user/papers/paper.pdf)
+"""
+    papers = parse_readme(readme, aggressive=True)
+    assert len(papers) == 1
+    assert papers[0].url == "file:///home/user/papers/paper.pdf"
+    assert papers[0].accessibility_status == AccessibilityStatus.HUMAN_ERROR
+
+
+def test_parse_readme_section_path_extraction():
+    """Test that section hierarchy is correctly extracted."""
+    readme = """\
+# Prospectivity
+## Oceania
+### Australia
+#### South Australia
+* [Project](https://github.com/example)
+\t* [paper](https://arxiv.org/abs/1234)
+"""
+    papers = parse_readme(readme, aggressive=True)
+    assert len(papers) == 1
+    assert papers[0].section_path == "Prospectivity/Oceania/Australia/South_Australia"
+
+
+def test_parse_readme_section_path_multiple_levels():
+    """Test section path with different heading levels."""
+    readme = """\
+# Remote Sensing
+## Hyperspectral
+* [Project A](https://github.com/a)
+\t* [paper](https://arxiv.org/abs/1111)
+
+# Geochemistry
+* [Project B](https://github.com/b)
+\t* [paper](https://arxiv.org/abs/2222)
+"""
+    papers = parse_readme(readme, aggressive=True)
+    assert len(papers) == 2
+    assert papers[0].section_path == "Remote_Sensing/Hyperspectral"
+    assert papers[1].section_path == "Geochemistry"
+
+
+def test_parse_readme_non_document_exclusions():
+    """Test that non-document URLs are excluded (datasets, videos, notebooks, etc.)."""
+    readme = """\
+# Resources
+- https://www.youtube.com/watch?v=abc -> Video tutorial
+- https://medium.com/@author/article -> Blog post
+- https://colab.research.google.com/drive/abc -> Notebook
+- https://zenodo.org/record/123 -> Dataset
+- https://figshare.com/articles/dataset/123 -> Dataset
+- https://github.com/example/repo -> Code repository
+"""
+    papers = parse_readme(readme, aggressive=True)
+    # None of these should be captured as papers
+    assert len(papers) == 0
+
+
+def test_parse_readme_github_repo_with_paper_label():
+    """Test that GitHub repos labeled as papers ARE captured."""
+    readme = """\
+# Papers
+* [paper](https://github.com/example/paper-repo) -> Paper about the repo
+"""
+    papers = parse_readme(readme, aggressive=True)
+    assert len(papers) == 1
+    assert papers[0].url == "https://github.com/example/paper-repo"
+    assert papers[0].resource_type == ResourceType.PAPER
+
+
+def test_parse_readme_trailing_punctuation_cleaned():
+    """Test that trailing punctuation is cleaned from URLs."""
+    readme = """\
+# Papers
+- https://arxiv.org/abs/2301.12346, -> Paper with comma
+"""
+    papers = parse_readme(readme, aggressive=True)
+    assert len(papers) == 1
+    assert papers[0].url == "https://arxiv.org/abs/2301.12346"
