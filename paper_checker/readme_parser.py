@@ -33,6 +33,42 @@ THESIS_LABELS = {"thesis", "theses", "phd", "honours thesis", "master's thesis"}
 REPORT_LABELS = {"report", "reports"}
 RESOURCE_LABELS = PAPER_LABELS | THESIS_LABELS | REPORT_LABELS
 
+# Academic/publisher domains whose URLs indicate paper/publication references.
+# Each entry is a substring matched against the URL.  Order does not matter.
+ACADEMIC_URL_PATTERNS = (
+    "researchgate.net/publication/",
+    "researchgate.net/profile/",
+    "arxiv.org/abs/",
+    "arxiv.org/pdf/",
+    "arxiv.org/html/",
+    "sciencedirect.com/science/article/",
+    "link.springer.com/article/",
+    "link.springer.com/chapter/",
+    "link.springer.com/epdf/",
+    "nature.com/articles/",
+    "ieeexplore.ieee.org/abstract/",
+    "ieeexplore.ieee.org/document/",
+    "ieeexplore.ieee.org/stamp/",
+    "tandfonline.com/doi/",
+    "wiley.com/doi/",
+    "doi.org/10.",
+    "mdpi.com/",
+    "frontiersin.org/articles/",
+    "frontiersin.org/journals/",
+    "copernicus.org/articles/",
+    "journals.plos.org/",
+    "library.seg.org/",
+    "pure.mpg.de/",
+    "eartharxiv.org/",
+    "researchsquare.com/",
+    "joss.theoj.org/",
+    "publications.csiro.au/",
+    "eprints.",
+    "pubs.usgs.gov/",
+    "pubs.er.usgs.gov/",
+    "geoscan.nrcan.gc.ca/",
+)
+
 
 def _label_to_resource_type(label: str) -> ResourceType:
     """Map a link label to a ResourceType."""
@@ -44,6 +80,12 @@ def _label_to_resource_type(label: str) -> ResourceType:
     if label_lower in REPORT_LABELS:
         return ResourceType.REPORT
     return ResourceType.PAPER
+
+
+def _is_academic_url(url: str) -> bool:
+    """Return True if *url* points to a known academic publication site."""
+    url_lower = url.lower()
+    return any(pattern in url_lower for pattern in ACADEMIC_URL_PATTERNS)
 
 
 def fetch_readme(
@@ -124,9 +166,10 @@ def parse_readme(readme_text: str) -> List[Paper]:
     Handles several link patterns found in the mineral-exploration-machine-learning
     README:
         1. ``[paper](url)`` / ``[Paper](url)`` / ``[report](url)`` etc.
-        2. ``[paper] -> url`` (broken/arrow-style link)
+        2. ``[paper] -> url`` or ``[paper]url`` (broken/arrow-style/typo links)
         3. Lines mentioning *thesis* / *PhD thesis* with a URL
-        4. Bare URLs on their own line that mention thesis or report
+        4. Bare academic URLs on a line (e.g. ``- https://researchgate.net/publication/...``)
+        5. Markdown links ``[Title](academic_url)`` pointing to known academic domains
 
     Each extracted entry is returned as a :class:`Paper` object with as much
     metadata filled in as possible (title from the parent bullet, section as a
@@ -198,13 +241,15 @@ def _extract_entries_from_line(
         )
         results.append(paper)
 
-    # --- Pattern 2: [paper] -> url  (arrow-style broken links) ---
-    arrow_pattern = re.compile(
+    # --- Pattern 2: [paper] -> url  or [paper]url  (broken/typo links) ---
+    # Matches both the arrow-style "[paper] -> url" and the typo variant
+    # "[paper]url" or "[paper] url" where parentheses are missing.
+    noparen_pattern = re.compile(
         r'\[(' + '|'.join(re.escape(l) for l in RESOURCE_LABELS)
-        + r')\]\s*->\s*(https?://\S+)',
+        + r')\]\s*(?:->\s*)?(https?://\S+)',
         re.IGNORECASE,
     )
-    for m in arrow_pattern.finditer(line):
+    for m in noparen_pattern.finditer(line):
         label = m.group(1)
         url = m.group(2).rstrip(')')
         resource_type = _label_to_resource_type(label)
@@ -243,7 +288,78 @@ def _extract_entries_from_line(
             )
             results.append(paper)
 
+    # --- Pattern 4 & 5: Academic URLs not already captured ---
+    # Collect URLs already found by patterns 1-3 so we don't duplicate them.
+    seen = {p.url for p in results if p.url}
+    _extract_academic_urls(line, lines, idx, section, results, seen)
+
     return results
+
+
+def _extract_academic_urls(
+    line: str,
+    lines: List[str],
+    idx: int,
+    section: str,
+    results: List[Paper],
+    seen: Optional[set] = None,
+) -> None:
+    """Detect academic paper URLs that are not wrapped in [paper]/[report]/[thesis] labels.
+
+    Handles two sub-patterns:
+        4. Bare academic URLs on a bullet line, e.g.
+           ``- https://www.researchgate.net/publication/...``
+        5. Markdown links whose text is a paper title and whose URL points to a
+           known academic domain, e.g.
+           ``* [GeoCoDa](https://www.researchgate.net/publication/...)``
+    """
+    if seen is None:
+        seen = set()
+
+    # Collect all URLs on the line
+    for raw_url in re.findall(r'(https?://\S+)', line):
+        # Clean markdown artifacts from URLs
+        url = re.split(r'[\]\)],?', raw_url)[0]
+        url = url.rstrip(',;>)')
+
+        if url in seen:
+            continue
+        if not _is_academic_url(url):
+            continue
+        if _is_anchor_link(url):
+            continue
+
+        # Try to get a markdown-linked title: [Title](url)
+        # Also handle [Title] (url) with an extra space before the paren
+        title_match = re.search(
+            r'\[([^\]]+)\]\s*\(\s*' + re.escape(raw_url), line
+        )
+        if title_match:
+            title = title_match.group(1)
+            # Skip generic labels that would have been caught by pattern 1
+            if title.lower().strip() in RESOURCE_LABELS:
+                continue
+        else:
+            # Try extracting a title from "-> Title" after the URL.
+            # The title ends at a bracket (used for annotations like [includes model])
+            # or at end of line.
+            arrow_match = re.search(
+                re.escape(raw_url) + r'\s*->\s*(.+?)(?:\s*\[|$)', line
+            )
+            if arrow_match:
+                title = arrow_match.group(1).strip()
+            else:
+                title, _ = _extract_parent_context(lines, idx)
+                if not title:
+                    title = _title_from_url(url)
+
+        paper = Paper(
+            title=title,
+            url=url,
+            resource_type=ResourceType.PAPER,
+            keywords=[section] if section else [],
+        )
+        results.append(paper)
 
 
 def _title_from_url(url: str) -> str:

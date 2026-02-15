@@ -10,6 +10,7 @@ from paper_checker.readme_parser import (
     _label_to_resource_type,
     _title_from_url,
     _extract_parent_context,
+    _is_academic_url,
     DEFAULT_REPO_OWNER,
     DEFAULT_REPO_NAME,
 )
@@ -213,3 +214,190 @@ def test_default_repo_constants():
     """Test that default repo constants are set correctly."""
     assert DEFAULT_REPO_OWNER == "RichardScottOZ"
     assert DEFAULT_REPO_NAME == "mineral-exploration-machine-learning"
+
+
+# ---------------------------------------------------------------------------
+# Tests for academic URL detection (patterns 4 & 5)
+# ---------------------------------------------------------------------------
+
+
+def test_is_academic_url():
+    """Test that _is_academic_url correctly identifies academic publication URLs."""
+    # Positive cases
+    assert _is_academic_url("https://www.researchgate.net/publication/12345_Some_Paper")
+    assert _is_academic_url("https://www.researchgate.net/profile/Author/publication/12345/links/abc/Paper.pdf")
+    assert _is_academic_url("https://arxiv.org/abs/2301.12345")
+    assert _is_academic_url("https://arxiv.org/pdf/2301.12345.pdf")
+    assert _is_academic_url("https://arxiv.org/html/2401.10825v3")
+    assert _is_academic_url("https://www.sciencedirect.com/science/article/pii/S0098300424000839")
+    assert _is_academic_url("https://link.springer.com/article/10.1007/s12345")
+    assert _is_academic_url("https://www.nature.com/articles/s41467-021-24025-8")
+    assert _is_academic_url("https://ieeexplore.ieee.org/abstract/document/10605826")
+    assert _is_academic_url("https://doi.org/10.1016/j.oregeorev.2020.103611")
+    assert _is_academic_url("https://www.mdpi.com/2075-163X/15/11/1125")
+    assert _is_academic_url("https://eartharxiv.org/repository/view/7417/")
+    assert _is_academic_url("https://pure.mpg.de/rest/items/item_3029184_8/component/file_3282959/content")
+
+    # Negative cases (non-academic)
+    assert not _is_academic_url("https://github.com/example/project")
+    assert not _is_academic_url("https://www.researchgate.net/")
+    assert not _is_academic_url("https://www.researchgate.net/project/SomeProject")
+    assert not _is_academic_url("https://www.researchgate.net/post/SomeQuestion")
+    assert not _is_academic_url("https://www.sciencedirect.com/journal/some-journal")
+    assert not _is_academic_url("https://www.youtube.com/watch?v=abc")
+    assert not _is_academic_url("https://en.wikipedia.org/wiki/Machine_learning")
+
+
+def test_parse_readme_bare_researchgate_url():
+    """Test parsing bare ResearchGate publication URLs on a line."""
+    readme = """\
+# Prospectivity
+- https://www.researchgate.net/publication/358956673_Towards_a_fully_data-driven_prospectivity_mapping_methodology
+"""
+    papers = parse_readme(readme)
+    assert len(papers) == 1
+    assert "researchgate.net/publication/358956673" in papers[0].url
+    assert papers[0].resource_type == ResourceType.PAPER
+
+
+def test_parse_readme_bare_arxiv_url_with_arrow_title():
+    """Test parsing bare arXiv URL with -> title."""
+    readme = """\
+# Deep Learning
+- https://arxiv.org/abs/2408.11804 -> Approaching Deep Learning through the Spectral Dynamics of Weights
+"""
+    papers = parse_readme(readme)
+    assert len(papers) == 1
+    assert papers[0].url == "https://arxiv.org/abs/2408.11804"
+    assert papers[0].title == "Approaching Deep Learning through the Spectral Dynamics of Weights"
+    assert papers[0].resource_type == ResourceType.PAPER
+
+
+def test_parse_readme_bare_sciencedirect_url():
+    """Test parsing bare ScienceDirect URL."""
+    readme = """\
+# Geochemistry
+- https://www.sciencedirect.com/science/article/abs/pii/S0098300424000839#sec6 -> Leveraging automated deep learning (AutoDL) in geosciences
+"""
+    papers = parse_readme(readme)
+    assert len(papers) == 1
+    assert "sciencedirect.com/science/article" in papers[0].url
+    assert papers[0].title == "Leveraging automated deep learning (AutoDL) in geosciences"
+
+
+def test_parse_readme_markdown_link_academic_url():
+    """Test parsing [Title](academic_url) links to known academic domains."""
+    readme = """\
+# Geochemistry
+* [GeoCoDa](https://www.researchgate.net/publication/372487589_GeoCoDA_Recognizing)
+"""
+    papers = parse_readme(readme)
+    assert len(papers) == 1
+    assert papers[0].title == "GeoCoDa"
+    assert "researchgate.net/publication/372487589" in papers[0].url
+    assert papers[0].resource_type == ResourceType.PAPER
+
+
+def test_parse_readme_markdown_link_with_space_before_paren():
+    """Test parsing [Title] (url) with extra space before parenthesis."""
+    readme = """\
+# Models
+* [Geological Everything Model] (https://arxiv.org/abs/2507.00419) -> A Foundation Model
+"""
+    papers = parse_readme(readme)
+    assert len(papers) == 1
+    assert papers[0].title == "Geological Everything Model"
+    assert papers[0].url == "https://arxiv.org/abs/2507.00419"
+
+
+def test_parse_readme_paper_label_no_parens():
+    """Test parsing [paper]url (no parentheses, no arrow)."""
+    readme = """\
+# NLP
+* [Some NER Project](https://github.com/example)
+\t* [paper]https://www.researchgate.net/publication/359186219_Few-shot_learning
+"""
+    papers = parse_readme(readme)
+    assert len(papers) == 1
+    assert "researchgate.net/publication/359186219" in papers[0].url
+    assert papers[0].resource_type == ResourceType.PAPER
+
+
+def test_parse_readme_paper_label_space_no_arrow():
+    """Test parsing [paper] url (space but no arrow)."""
+    readme = """\
+# Geochemistry
+* [Some Project](https://github.com/example)
+\t* [paper] https://www.researchgate.net/publication/380289934_Secular_Changes
+"""
+    papers = parse_readme(readme)
+    assert len(papers) == 1
+    assert "researchgate.net/publication/380289934" in papers[0].url
+    assert papers[0].resource_type == ResourceType.PAPER
+
+
+def test_parse_readme_bare_url_no_space_after_dash():
+    """Test parsing -https://url (missing space after dash)."""
+    readme = """\
+# NLP
+-https://arxiv.org/html/2401.10825v3 -> Recent Advances in Named Entity Recognition
+"""
+    papers = parse_readme(readme)
+    assert len(papers) == 1
+    assert papers[0].url == "https://arxiv.org/html/2401.10825v3"
+    assert papers[0].title == "Recent Advances in Named Entity Recognition"
+
+
+def test_parse_readme_non_academic_url_excluded():
+    """Test that non-academic URLs are NOT captured by patterns 4 & 5."""
+    readme = """\
+# Resources
+* [MyProject](https://github.com/example/project) -> Description
+- https://github.com/example/another -> Another repo
+- https://www.youtube.com/watch?v=abc -> Some video
+- https://zenodo.org/record/123 -> A dataset
+"""
+    papers = parse_readme(readme)
+    assert len(papers) == 0
+
+
+def test_parse_readme_researchgate_homepage_excluded():
+    """Test that ResearchGate homepage link is NOT captured."""
+    readme = """\
+# Resources
+* [ResearchGate](https://www.researchgate.net/) -> Researcher and professional network
+"""
+    papers = parse_readme(readme)
+    assert len(papers) == 0
+
+
+def test_parse_readme_dedup_academic_and_paper_label():
+    """Test that a URL captured by [paper](url) is not also captured by academic URL pattern."""
+    readme = """\
+# Section
+* [Project A](https://github.com/a)
+\t* [paper](https://www.researchgate.net/publication/12345_Test)
+"""
+    papers = parse_readme(readme)
+    assert len(papers) == 1
+    assert papers[0].resource_type == ResourceType.PAPER
+
+
+def test_parse_readme_multiple_academic_domains():
+    """Test parsing multiple different academic domains in one README."""
+    readme = """\
+# Papers
+- https://www.researchgate.net/publication/12345_Paper_A
+- https://arxiv.org/abs/2301.12345 -> Paper B
+- https://www.nature.com/articles/s41467-021-24025-8 -> Paper C
+- https://ieeexplore.ieee.org/abstract/document/10605826 -> Paper D
+- https://link.springer.com/article/10.1007/s12345 -> Paper E
+"""
+    papers = parse_readme(readme)
+    assert len(papers) == 5
+    urls = {p.url for p in papers}
+    assert any("researchgate.net" in u for u in urls)
+    assert any("arxiv.org" in u for u in urls)
+    assert any("nature.com" in u for u in urls)
+    assert any("ieeexplore.ieee.org" in u for u in urls)
+    assert any("springer.com" in u for u in urls)
