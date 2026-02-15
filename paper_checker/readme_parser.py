@@ -385,6 +385,9 @@ def _extract_entries_from_line(
     results: List[Paper] = []
     section = _find_section_for_line(lines, idx)
     section_path = _build_section_path(lines, idx)
+    
+    # Check if line contains [UNSEEN] tag
+    unseen_tag = '[UNSEEN]' in line or '[unseen]' in line
 
     # --- Pattern 1: [paper](url), [Paper](url), [report](url), etc. ---
     # Also handle double parens: [paper]((url))
@@ -407,6 +410,7 @@ def _extract_entries_from_line(
                 keywords=[section] if section else [],
                 section_path=section_path,
                 accessibility_status=AccessibilityStatus.HUMAN_ERROR,
+                unseen_tag=unseen_tag,
             )
             results.append(paper)
             continue
@@ -425,6 +429,7 @@ def _extract_entries_from_line(
             resource_type=resource_type,
             keywords=[section] if section else [],
             section_path=section_path,
+            unseen_tag=unseen_tag,
         )
         results.append(paper)
 
@@ -454,6 +459,7 @@ def _extract_entries_from_line(
                 keywords=[section] if section else [],
                 section_path=section_path,
                 accessibility_status=AccessibilityStatus.HUMAN_ERROR,
+                unseen_tag=unseen_tag,
             )
             results.append(paper)
             continue
@@ -470,6 +476,7 @@ def _extract_entries_from_line(
             resource_type=resource_type,
             keywords=[section] if section else [],
             section_path=section_path,
+            unseen_tag=unseen_tag,
         )
         results.append(paper)
 
@@ -500,6 +507,7 @@ def _extract_entries_from_line(
                     keywords=[section] if section else [],
                     section_path=section_path,
                     accessibility_status=AccessibilityStatus.HUMAN_ERROR,
+                    unseen_tag=unseen_tag,
                 )
                 results.append(paper)
                 continue
@@ -532,13 +540,14 @@ def _extract_entries_from_line(
                 resource_type=ResourceType.THESIS,
                 keywords=[section] if section else [],
                 section_path=section_path,
+                unseen_tag=unseen_tag,
             )
             results.append(paper)
 
     # --- Pattern 4 & 5: Academic URLs not already captured ---
     # Collect URLs already found by patterns 1-3 so we don't duplicate them.
     seen = {p.url for p in results if p.url}
-    _extract_academic_urls(line, lines, idx, section, results, seen, section_path, aggressive)
+    _extract_academic_urls(line, lines, idx, section, results, seen, section_path, aggressive, unseen_tag)
 
     return results
 
@@ -552,6 +561,7 @@ def _extract_academic_urls(
     seen: Optional[set] = None,
     section_path: str = "",
     aggressive: bool = True,
+    unseen_tag: bool = False,
 ) -> None:
     """Detect academic paper URLs that are not wrapped in [paper]/[report]/[thesis] labels.
 
@@ -629,6 +639,7 @@ def _extract_academic_urls(
             resource_type=resource_type,
             keywords=[section] if section else [],
             section_path=section_path,
+            unseen_tag=unseen_tag,
         )
         results.append(paper)
         seen.add(url)
