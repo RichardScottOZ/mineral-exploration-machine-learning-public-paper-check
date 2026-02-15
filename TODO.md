@@ -19,7 +19,7 @@
 
 ## High Priority
 
-- [ ] Add `--force` flag logic: re-read existing CSV, skip papers with `download_success=true` unless `--force` is set; merge new scan results with existing CSV (preserve download status for known URLs)
+- [x] Add `--force` flag logic: re-read existing CSV, skip papers with `download_success=true` unless `--force` is set; merge new scan results with existing CSV (preserve download status for known URLs)
 - [ ] Add `--no-headless` second pass support: filter CSV to papers with status `requires_login`/`restricted`/`error`, launch visible browser, pause for manual login when needed, re-attempt downloads
 - [ ] Improve paywall detection in `checker.py`: only flag as paywalled when very confident (e.g. explicit "purchase article" button, not just "subscribe to newsletter"); try to find open-access version first
 - [ ] Add adaptive backoff: track 429/503 responses per domain, increase delay for that domain, log when backing off

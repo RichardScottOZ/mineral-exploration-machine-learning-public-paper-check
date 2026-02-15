@@ -400,13 +400,14 @@ def download(repo, output_dir, aggressive, headless, force, csv_path):
     
     Workflow:
     1. Parse README and extract all paper/report/thesis links
-    2. Write initial CSV with extracted papers
+    2. Check if CSV exists and merge with existing data (unless --force)
     3. Check accessibility and resolve URLs
     4. Download papers to section-organized folders
     5. Update CSV with final status
     """
     from paper_checker.csv_io import write_papers_csv, read_papers_csv
     from pathlib import Path
+    import os
     
     parts = repo.split("/", 1)
     if len(parts) != 2:
@@ -414,7 +415,19 @@ def download(repo, output_dir, aggressive, headless, force, csv_path):
         sys.exit(1)
     owner, name = parts
     
-    click.echo(f"Scanning https://github.com/{owner}/{name} ...")
+    # Check if CSV exists
+    csv_exists = os.path.exists(csv_path)
+    existing_papers = {}
+    
+    if csv_exists and not force:
+        click.echo(f"Found existing CSV: {csv_path}")
+        click.echo("Reading existing data...")
+        existing_list = read_papers_csv(csv_path)
+        # Build map of URL -> Paper for merging
+        existing_papers = {p.url: p for p in existing_list if p.url}
+        click.echo(f"Loaded {len(existing_papers)} existing papers")
+    
+    click.echo(f"\nScanning https://github.com/{owner}/{name} ...")
     
     # Phase 1: Parse README
     try:
@@ -427,33 +440,59 @@ def download(repo, output_dir, aggressive, headless, force, csv_path):
         click.echo("No papers/reports/theses found in the README.")
         return
     
-    click.echo(f"Found {len(papers)} paper/report/thesis entries.")
+    click.echo(f"Found {len(papers)} paper/report/thesis entries from README.")
+    
+    # Merge with existing data
+    if existing_papers and not force:
+        click.echo("Merging with existing data...")
+        merged_count = 0
+        for paper in papers:
+            if paper.url in existing_papers:
+                existing = existing_papers[paper.url]
+                # Preserve download status and file path from existing
+                paper.download_success = existing.download_success
+                paper.local_file_path = existing.local_file_path
+                paper.accessibility_status = existing.accessibility_status
+                paper.url_resolvable = existing.url_resolvable
+                paper.final_resolved_url = existing.final_resolved_url
+                paper.last_checked = existing.last_checked
+                merged_count += 1
+        click.echo(f"Merged {merged_count} papers with existing data")
     
     # Assign IDs
     for i, paper in enumerate(papers, start=1):
         paper.id = i
     
     # Write initial CSV
-    click.echo(f"Writing initial CSV to {csv_path}...")
+    click.echo(f"Writing CSV to {csv_path}...")
     write_papers_csv(papers, csv_path)
     
-    # Phase 2: Check accessibility and resolve URLs
-    click.echo(f"\nChecking accessibility for {len(papers)} papers...")
+    # Phase 2: Check accessibility and resolve URLs (skip already checked unless force)
+    papers_to_check = papers if force else [p for p in papers if p.accessibility_status == AccessibilityStatus.UNKNOWN]
     
-    async def check_all():
-        async with AccessibilityChecker(headless=headless) as checker:
-            for i, paper in enumerate(papers, 1):
-                title_display = paper.title[:60] if paper.title else "untitled"
-                click.echo(f"[{i}/{len(papers)}] Checking: {title_display}...")
-                updated = await checker.check_and_resolve(paper)
-                papers[i-1] = updated
-                click.echo(f"  → {updated.accessibility_status.value}, resolvable: {updated.url_resolvable}")
-    
-    asyncio.run(check_all())
-    
-    # Update CSV after accessibility check
-    write_papers_csv(papers, csv_path)
-    click.echo(f"✓ Updated CSV with accessibility status")
+    if papers_to_check:
+        click.echo(f"\nChecking accessibility for {len(papers_to_check)} papers...")
+        
+        async def check_all():
+            async with AccessibilityChecker(headless=headless) as checker:
+                for i, paper in enumerate(papers_to_check, 1):
+                    title_display = paper.title[:60] if paper.title else "untitled"
+                    click.echo(f"[{i}/{len(papers_to_check)}] Checking: {title_display}...")
+                    updated = await checker.check_and_resolve(paper)
+                    # Update in main list
+                    for j, p in enumerate(papers):
+                        if p.id == updated.id:
+                            papers[j] = updated
+                            break
+                    click.echo(f"  → {updated.accessibility_status.value}, resolvable: {updated.url_resolvable}")
+        
+        asyncio.run(check_all())
+        
+        # Update CSV after accessibility check
+        write_papers_csv(papers, csv_path)
+        click.echo(f"✓ Updated CSV with accessibility status")
+    else:
+        click.echo("All papers already checked (use --force to re-check)")
     
     # Phase 3: Download papers
     click.echo(f"\nDownloading papers to {output_dir}...")
