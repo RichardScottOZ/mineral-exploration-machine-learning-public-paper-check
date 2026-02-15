@@ -226,7 +226,7 @@ def _extract_parent_context(lines: List[str], line_idx: int) -> Tuple[str, str]:
     return "", ""
 
 
-def parse_readme(readme_text: str) -> List[Paper]:
+def parse_readme(readme_text: str, aggressive: bool = True) -> List[Paper]:
     """
     Parse a README markdown string and extract all paper/report/thesis entries.
 
@@ -238,12 +238,18 @@ def parse_readme(readme_text: str) -> List[Paper]:
         4. Bare academic URLs on a line (e.g. ``- https://researchgate.net/publication/...``)
         5. Markdown links ``[Title](academic_url)`` pointing to known academic domains
 
+    When aggressive=True (default), also handles:
+        - Missing https:// prefix: ``[paper](www.sciencedirect.com/...)``
+        - Double parens: ``[paper]((url))``
+        - Bare URLs without protocol prefix
+
     Each extracted entry is returned as a :class:`Paper` object with as much
     metadata filled in as possible (title from the parent bullet, section as a
     keyword, URL, and resource type).
 
     Args:
         readme_text: Raw markdown content.
+        aggressive: Enable aggressive parsing for messy/broken links (default: True).
 
     Returns:
         List of Paper objects extracted from the README.
@@ -253,7 +259,7 @@ def parse_readme(readme_text: str) -> List[Paper]:
     lines = readme_text.splitlines()
 
     for idx, line in enumerate(lines):
-        extracted = _extract_entries_from_line(line, lines, idx)
+        extracted = _extract_entries_from_line(line, lines, idx, aggressive)
         for paper in extracted:
             # Deduplicate by URL
             if paper.url and paper.url in seen_urls:
@@ -279,8 +285,48 @@ def _is_anchor_link(url: str) -> bool:
     )
 
 
+def _normalize_url(url: str, aggressive: bool = True) -> Optional[str]:
+    """
+    Normalize and fix common URL issues.
+    
+    Args:
+        url: Raw URL string
+        aggressive: If True, attempt to fix missing protocols and other issues
+        
+    Returns:
+        Normalized URL or None if invalid
+    """
+    if not url:
+        return None
+    
+    # Strip whitespace and common trailing punctuation
+    url = url.strip().rstrip(',;>)')
+    
+    # Check for file:/// paths - these are human errors
+    if url.startswith('file:///'):
+        return None
+    
+    # If aggressive mode and URL looks like it's missing protocol
+    if aggressive:
+        # Handle www. prefix without protocol
+        if url.startswith('www.'):
+            url = 'https://' + url
+        # Handle common academic domains without protocol
+        elif any(domain in url.lower() for domain in [
+            'researchgate.net', 'arxiv.org', 'sciencedirect.com',
+            'springer.com', 'ieee.org', 'doi.org'
+        ]) and not url.startswith(('http://', 'https://')):
+            url = 'https://' + url
+    
+    # Must have a protocol at this point
+    if not url.startswith(('http://', 'https://')):
+        return None
+    
+    return url
+
+
 def _extract_entries_from_line(
-    line: str, lines: List[str], idx: int
+    line: str, lines: List[str], idx: int, aggressive: bool = True
 ) -> List[Paper]:
     """Extract zero or more Paper entries from a single README line."""
     results: List[Paper] = []
@@ -288,14 +334,16 @@ def _extract_entries_from_line(
     section_path = _build_section_path(lines, idx)
 
     # --- Pattern 1: [paper](url), [Paper](url), [report](url), etc. ---
-    for m in re.finditer(
-        r'\[(' + '|'.join(re.escape(l) for l in RESOURCE_LABELS) + r')\]\((https?://[^)]+)\)',
-        line,
-        re.IGNORECASE,
-    ):
+    # Also handle double parens: [paper]((url))
+    pattern1_regex = (
+        r'\[(' + '|'.join(re.escape(l) for l in RESOURCE_LABELS) + 
+        r')\]\(\(?([^)]+)\)?\)'
+    )
+    for m in re.finditer(pattern1_regex, line, re.IGNORECASE):
         label = m.group(1)
-        url = m.group(2)
-        if _is_anchor_link(url):
+        raw_url = m.group(2)
+        url = _normalize_url(raw_url, aggressive)
+        if not url or _is_anchor_link(url):
             continue
         resource_type = _label_to_resource_type(label)
         title, parent_url = _extract_parent_context(lines, idx)
@@ -315,12 +363,18 @@ def _extract_entries_from_line(
     # "[paper]url" or "[paper] url" where parentheses are missing.
     noparen_pattern = re.compile(
         r'\[(' + '|'.join(re.escape(l) for l in RESOURCE_LABELS)
-        + r')\]\s*(?:->\s*)?(https?://\S+)',
+        + r')\]\s*(?:->\s*)?(\S+)',
         re.IGNORECASE,
     )
     for m in noparen_pattern.finditer(line):
         label = m.group(1)
-        url = m.group(2).rstrip(')')
+        raw_url = m.group(2)
+        # Skip if this looks like it was already captured by pattern 1
+        if raw_url.startswith('('):
+            continue
+        url = _normalize_url(raw_url, aggressive)
+        if not url:
+            continue
         resource_type = _label_to_resource_type(label)
         title, _ = _extract_parent_context(lines, idx)
         if not title:
@@ -336,16 +390,38 @@ def _extract_entries_from_line(
 
     # --- Pattern 3: Lines containing thesis/PhD with a URL ---
     if re.search(r'(?:thesis|theses|phd)', line, re.IGNORECASE) and not results:
-        urls = re.findall(r'(https?://\S+)', line)
-        for raw_url in urls:
-            # Clean markdown artifacts from URLs: strip from first ']' or ')' that
-            # indicates the end of a markdown construct
-            url = re.split(r'[\]\)],?', raw_url)[0]
-            url = url.rstrip(',;>')
-            # Try to extract a markdown-linked title
-            title_match = re.search(r'\[([^\]]+)\]\(' + re.escape(raw_url), line)
+        # Look for URLs in various formats
+        urls_found = []
+        # Normal URLs
+        for url in re.findall(r'https?://\S+', line):
+            # Clean markdown artifacts
+            url = re.split(r'[\]\)],?', url)[0]
+            url = url.rstrip(',;>)')
+            urls_found.append(url)
+        # Also check for backwards markdown: [url](text)
+        for url in re.findall(r'\[(https?://[^\]]+)\]\([^\)]+\)', line):
+            urls_found.append(url)
+        
+        for raw_url in urls_found:
+            url = _normalize_url(raw_url, aggressive)
+            if not url:
+                continue
+            # Skip GitHub repo URLs (not academic papers)
+            if 'github.com' in url and not _is_academic_url(url):
+                continue
+            # Try to extract a markdown-linked title (normal format)
+            title_match = re.search(r'\[([^\]]+)\]\(\s*' + re.escape(raw_url), line)
             if title_match:
                 title = title_match.group(1)
+                # If title is the URL itself (backwards format), look for text after arrow
+                if title.startswith('http'):
+                    arrow_match = re.search(r'->\s*(.+?)(?:\s*$)', line)
+                    if arrow_match:
+                        title = arrow_match.group(1).strip()
+                    else:
+                        title, _ = _extract_parent_context(lines, idx)
+                        if not title:
+                            title = _title_from_url(url)
             else:
                 title, _ = _extract_parent_context(lines, idx)
                 if not title:
@@ -362,7 +438,7 @@ def _extract_entries_from_line(
     # --- Pattern 4 & 5: Academic URLs not already captured ---
     # Collect URLs already found by patterns 1-3 so we don't duplicate them.
     seen = {p.url for p in results if p.url}
-    _extract_academic_urls(line, lines, idx, section, results, seen, section_path)
+    _extract_academic_urls(line, lines, idx, section, results, seen, section_path, aggressive)
 
     return results
 
@@ -375,6 +451,7 @@ def _extract_academic_urls(
     results: List[Paper],
     seen: Optional[set] = None,
     section_path: str = "",
+    aggressive: bool = True,
 ) -> None:
     """Detect academic paper URLs that are not wrapped in [paper]/[report]/[thesis] labels.
 
@@ -388,12 +465,20 @@ def _extract_academic_urls(
     if seen is None:
         seen = set()
 
-    # Collect all URLs on the line
-    for raw_url in re.findall(r'(https?://\S+)', line):
-        # Clean markdown artifacts from URLs
-        url = re.split(r'[\]\)],?', raw_url)[0]
-        url = url.rstrip(',;>)')
-
+    # Check if line mentions thesis/PhD to determine resource type
+    is_thesis_line = bool(re.search(r'(?:thesis|theses|phd)', line, re.IGNORECASE))
+    
+    # Collect all URLs on the line - in aggressive mode, also look for URLs without protocol
+    if aggressive:
+        # Match URLs with protocol OR domain-like patterns (but not inside markdown brackets)
+        url_pattern = r'(?<!\[)(?:https?://\S+|(?:www\.|[a-z0-9-]+\.(?:com|org|net|edu|gov|io|co\.uk))/\S+)'
+    else:
+        url_pattern = r'https?://\S+'
+    
+    for raw_url in re.findall(url_pattern, line):
+        url = _normalize_url(raw_url, aggressive)
+        if not url:
+            continue
         if url in seen:
             continue
         if not _is_academic_url(url):
@@ -425,14 +510,18 @@ def _extract_academic_urls(
                 if not title:
                     title = _title_from_url(url)
 
+        # Determine resource type based on line content
+        resource_type = ResourceType.THESIS if is_thesis_line else ResourceType.PAPER
+        
         paper = Paper(
             title=title,
             url=url,
-            resource_type=ResourceType.PAPER,
+            resource_type=resource_type,
             keywords=[section] if section else [],
             section_path=section_path,
         )
         results.append(paper)
+        seen.add(url)
 
 
 def _title_from_url(url: str) -> str:
