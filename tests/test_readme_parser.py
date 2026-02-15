@@ -101,7 +101,7 @@ def test_parse_readme_thesis_markdown_link():
 
 
 def test_parse_readme_deduplication():
-    """Test that duplicate URLs are skipped."""
+    """Test that duplicate URLs are flagged with duplicate_of."""
     readme = """\
 # Section
 * [Project A](https://github.com/a)
@@ -110,7 +110,11 @@ def test_parse_readme_deduplication():
 \t* [paper](https://arxiv.org/abs/1111)
 """
     papers = parse_readme(readme)
-    assert len(papers) == 1
+    assert len(papers) == 2
+    # First occurrence should not have duplicate_of set
+    assert papers[0].duplicate_of is None
+    # Second occurrence should have duplicate_of pointing to first (1-based index)
+    assert papers[1].duplicate_of == 1
 
 
 def test_parse_readme_multiple_papers():

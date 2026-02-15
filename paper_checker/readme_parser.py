@@ -298,6 +298,9 @@ def parse_readme(readme_text: str, aggressive: bool = True) -> List[Paper]:
     Each extracted entry is returned as a :class:`Paper` object with as much
     metadata filled in as possible (title from the parent bullet, section as a
     keyword, URL, and resource type).
+    
+    Duplicate detection: Papers with the same URL will have their `duplicate_of`
+    field set to the ID (1-based index) of the first occurrence.
 
     Args:
         readme_text: Raw markdown content.
@@ -307,17 +310,20 @@ def parse_readme(readme_text: str, aggressive: bool = True) -> List[Paper]:
         List of Paper objects extracted from the README.
     """
     papers: List[Paper] = []
-    seen_urls: set = set()
+    seen_urls: dict = {}  # url -> first paper index (1-based)
     lines = readme_text.splitlines()
 
     for idx, line in enumerate(lines):
         extracted = _extract_entries_from_line(line, lines, idx, aggressive)
         for paper in extracted:
-            # Deduplicate by URL
-            if paper.url and paper.url in seen_urls:
-                continue
+            # Track URL for duplicate detection
             if paper.url:
-                seen_urls.add(paper.url)
+                if paper.url in seen_urls:
+                    # This is a duplicate - set duplicate_of to first occurrence
+                    paper.duplicate_of = seen_urls[paper.url]
+                else:
+                    # First occurrence - record it (1-based index)
+                    seen_urls[paper.url] = len(papers) + 1
             papers.append(paper)
 
     return papers
@@ -483,16 +489,16 @@ def _extract_entries_from_line(
     # --- Pattern 3: Lines containing thesis/PhD with a URL ---
     if re.search(r'(?:thesis|theses|phd)', line, re.IGNORECASE) and not results:
         # Look for URLs in various formats
-        urls_found = []
+        urls_found = set()  # Use set to avoid duplicates within same line
         # Normal URLs
         for url in re.findall(r'https?://\S+', line):
             # Clean markdown artifacts
             url = re.split(r'[\]\)],?', url)[0]
             url = url.rstrip(',;>)')
-            urls_found.append(url)
+            urls_found.add(url)
         # Also check for backwards markdown: [url](text)
         for url in re.findall(r'\[(https?://[^\]]+)\]\([^\)]+\)', line):
-            urls_found.append(url)
+            urls_found.add(url)
         
         for raw_url in urls_found:
             url = _normalize_url(raw_url, aggressive)
