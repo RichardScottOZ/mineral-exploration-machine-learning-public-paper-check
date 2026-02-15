@@ -1,0 +1,47 @@
+[
+  {
+    "title": "Machine Learning in Mineral Exploration: A Review",
+    "authors": ["John Smith", "Jane Doe"],
+    "year": 2023,
+    "resource_type": "paper",
+    "url": "https://arxiv.org/abs/2301.12345",
+    "journal": "Journal of Geoscience and Mining",
+    "abstract": "This paper reviews recent applications of machine learning in mineral exploration.",
+    "keywords": ["machine learning", "mineral exploration", "geoscience"]
+  },
+  {
+    "title": "Deep Learning for Geophysical Data Analysis",
+    "authors": ["Alice Johnson", "Bob Williams"],
+    "year": 2022,
+    "resource_type": "paper",
+    "doi": "10.1000/xyz123",
+    "conference": "International Conference on AI in Geoscience",
+    "abstract": "We present a deep learning framework for analyzing geophysical survey data."
+  },
+  {
+    "title": "Predictive Modeling of Ore Deposits Using Random Forests",
+    "authors": ["Carol Martinez"],
+    "year": 2021,
+    "resource_type": "thesis",
+    "url": "https://example.edu/thesis/123456",
+    "abstract": "This thesis explores the use of random forest algorithms for predicting ore deposit locations."
+  },
+  {
+    "title": "Neural Networks for Geological Pattern Recognition",
+    "authors": ["David Lee", "Emma Brown", "Frank Chen"],
+    "year": 2023,
+    "resource_type": "paper",
+    "url": "https://doi.org/10.1016/j.example.2023.01.001",
+    "journal": "Computers & Geosciences",
+    "volume": "150",
+    "pages": "105-120"
+  },
+  {
+    "title": "A Technical Report on AI-Driven Mineral Prospectivity Mapping",
+    "authors": ["Government Geological Survey"],
+    "year": 2022,
+    "resource_type": "report",
+    "publisher": "National Geological Survey",
+    "url": "https://example.gov/reports/2022/ai-mineral-mapping.pdf"
+  }
+]
