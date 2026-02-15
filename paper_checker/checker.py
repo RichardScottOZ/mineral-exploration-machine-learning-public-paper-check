@@ -262,7 +262,7 @@ class AccessibilityChecker:
                     return True
             
             return False
-        except:
+        except Exception:
             return False
     
     async def _check_login_required_browser(self, page: Page) -> bool:
@@ -282,23 +282,23 @@ class AccessibilityChecker:
                     return True
             
             return False
-        except:
+        except Exception:
             return False
     
     async def _find_download_link_browser(self, page: Page, base_url: str) -> Optional[str]:
         """Find PDF download link using browser"""
         try:
             # Look for PDF links
-            pdf_link = page.locator("a[href*='.pdf']").first
-            if await pdf_link.count() > 0:
-                return await pdf_link.get_attribute("href")
+            pdf_locator = page.locator("a[href*='.pdf']")
+            if await pdf_locator.count() > 0:
+                return await pdf_locator.first.get_attribute("href")
             
             # Look for download buttons
-            download_button = page.locator("a:has-text('Download')").first
-            if await download_button.count() > 0:
-                return await download_button.get_attribute("href")
+            download_locator = page.locator("a:has-text('Download')")
+            if await download_locator.count() > 0:
+                return await download_locator.first.get_attribute("href")
             
-        except:
+        except Exception:
             pass
         
         return None
