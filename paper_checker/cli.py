@@ -14,6 +14,13 @@ from tabulate import tabulate
 from paper_checker.database import PaperDatabase
 from paper_checker.models import Paper, AccessibilityStatus, ResourceType
 from paper_checker.checker import AccessibilityChecker, check_papers_batch
+from paper_checker.readme_parser import (
+    scan_repo,
+    parse_readme,
+    DEFAULT_REPO_OWNER,
+    DEFAULT_REPO_NAME,
+    DEFAULT_REPO_URL,
+)
 
 
 @click.group()
@@ -21,6 +28,77 @@ from paper_checker.checker import AccessibilityChecker, check_papers_batch
 def main():
     """Paper Accessibility Checker - Manage and check academic papers"""
     pass
+
+
+@main.command()
+@click.option("--db", default="papers.db", help="Database file path")
+@click.option(
+    "--repo",
+    default=f"{DEFAULT_REPO_OWNER}/{DEFAULT_REPO_NAME}",
+    help="GitHub repository to scan (owner/name)",
+)
+@click.option("--check/--no-check", default=False, help="Also check accessibility after importing")
+@click.option("--headless/--no-headless", default=True, help="Run browser in headless mode")
+def scan(db, repo, check, headless):
+    """Scan a GitHub repository README for paper/report/thesis links and import them.
+
+    By default scans the mineral-exploration-machine-learning repository:
+    https://github.com/RichardScottOZ/mineral-exploration-machine-learning
+    """
+    parts = repo.split("/", 1)
+    if len(parts) != 2:
+        click.echo(f"Invalid repository format: {repo}. Use owner/name.", err=True)
+        sys.exit(1)
+    owner, name = parts
+
+    click.echo(f"Scanning https://github.com/{owner}/{name} ...")
+
+    try:
+        papers = scan_repo(owner=owner, repo=name)
+    except RuntimeError as exc:
+        click.echo(f"Error: {exc}", err=True)
+        sys.exit(1)
+
+    if not papers:
+        click.echo("No papers/reports/theses found in the README.")
+        return
+
+    click.echo(f"Found {len(papers)} paper/report/thesis entries.")
+
+    with PaperDatabase(db) as database:
+        # Check for duplicates by URL
+        existing = database.get_all_papers(limit=100000)
+        existing_urls = {p.url for p in existing if p.url}
+
+        added = 0
+        skipped = 0
+        for paper in papers:
+            if paper.url and paper.url in existing_urls:
+                skipped += 1
+                continue
+            database.add_paper(paper)
+            if paper.url:
+                existing_urls.add(paper.url)
+            added += 1
+
+        click.echo(f"✓ Imported {added} new entries ({skipped} duplicates skipped).")
+
+        if check and added > 0:
+            all_papers = database.get_all_papers()
+            unchecked = [p for p in all_papers if p.accessibility_status == AccessibilityStatus.UNKNOWN]
+            if unchecked:
+                click.echo(f"\nChecking accessibility for {len(unchecked)} papers...")
+
+                async def check_and_update():
+                    async with AccessibilityChecker(headless=headless) as checker:
+                        for i, paper in enumerate(unchecked, 1):
+                            click.echo(f"[{i}/{len(unchecked)}] Checking: {paper.title[:60]}...")
+                            updated = await checker.check_paper(paper)
+                            database.update_paper(updated)
+                            click.echo(f"  → Status: {updated.accessibility_status.value}")
+
+                asyncio.run(check_and_update())
+                click.echo("✓ Accessibility check complete!")
 
 
 @main.command()
