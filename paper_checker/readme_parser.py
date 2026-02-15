@@ -670,6 +670,7 @@ def _title_from_url(url: str) -> str:
 def scan_repo(
     owner: str = DEFAULT_REPO_OWNER,
     repo: str = DEFAULT_REPO_NAME,
+    aggressive: bool = True,
 ) -> List[Paper]:
     """
     Fetch the README from a GitHub repository and extract all paper/report/thesis
@@ -681,9 +682,10 @@ def scan_repo(
     Args:
         owner: GitHub repository owner (default: RichardScottOZ).
         repo: GitHub repository name (default: mineral-exploration-machine-learning).
+        aggressive: Use aggressive link parsing (default: True).
 
     Returns:
         List of Paper objects extracted from the README.
     """
     readme_text = fetch_readme(owner, repo)
-    return parse_readme(readme_text)
+    return parse_readme(readme_text, aggressive=aggressive)

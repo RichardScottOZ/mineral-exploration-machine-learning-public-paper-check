@@ -383,5 +383,129 @@ def export(db, output_file, output_format, status):
         click.echo(f"✓ Exported {len(papers)} papers to {output_file}")
 
 
+@main.command()
+@click.option(
+    "--repo",
+    default=f"{DEFAULT_REPO_OWNER}/{DEFAULT_REPO_NAME}",
+    help="GitHub repository to scan (owner/name)",
+)
+@click.option("--output-dir", default="./downloads/", help="Output directory for downloads")
+@click.option("--aggressive/--no-aggressive", default=True, help="Use aggressive link parsing")
+@click.option("--headless/--no-headless", default=True, help="Run browser in headless mode")
+@click.option("--force", is_flag=True, help="Re-download already downloaded papers")
+@click.option("--csv", "csv_path", default="papers_download.csv", help="CSV file path for status tracking")
+def download(repo, output_dir, aggressive, headless, force, csv_path):
+    """
+    Download papers from a GitHub repository README.
+    
+    Workflow:
+    1. Parse README and extract all paper/report/thesis links
+    2. Write initial CSV with extracted papers
+    3. Check accessibility and resolve URLs
+    4. Download papers to section-organized folders
+    5. Update CSV with final status
+    """
+    from paper_checker.csv_io import write_papers_csv, read_papers_csv
+    from pathlib import Path
+    
+    parts = repo.split("/", 1)
+    if len(parts) != 2:
+        click.echo(f"Invalid repository format: {repo}. Use owner/name.", err=True)
+        sys.exit(1)
+    owner, name = parts
+    
+    click.echo(f"Scanning https://github.com/{owner}/{name} ...")
+    
+    # Phase 1: Parse README
+    try:
+        papers = scan_repo(owner=owner, repo=name, aggressive=aggressive)
+    except RuntimeError as exc:
+        click.echo(f"Error: {exc}", err=True)
+        sys.exit(1)
+    
+    if not papers:
+        click.echo("No papers/reports/theses found in the README.")
+        return
+    
+    click.echo(f"Found {len(papers)} paper/report/thesis entries.")
+    
+    # Assign IDs
+    for i, paper in enumerate(papers, start=1):
+        paper.id = i
+    
+    # Write initial CSV
+    click.echo(f"Writing initial CSV to {csv_path}...")
+    write_papers_csv(papers, csv_path)
+    
+    # Phase 2: Check accessibility and resolve URLs
+    click.echo(f"\nChecking accessibility for {len(papers)} papers...")
+    
+    async def check_all():
+        async with AccessibilityChecker(headless=headless) as checker:
+            for i, paper in enumerate(papers, 1):
+                title_display = paper.title[:60] if paper.title else "untitled"
+                click.echo(f"[{i}/{len(papers)}] Checking: {title_display}...")
+                updated = await checker.check_and_resolve(paper)
+                papers[i-1] = updated
+                click.echo(f"  → {updated.accessibility_status.value}, resolvable: {updated.url_resolvable}")
+    
+    asyncio.run(check_all())
+    
+    # Update CSV after accessibility check
+    write_papers_csv(papers, csv_path)
+    click.echo(f"✓ Updated CSV with accessibility status")
+    
+    # Phase 3: Download papers
+    click.echo(f"\nDownloading papers to {output_dir}...")
+    
+    # Filter papers to download
+    if not force:
+        # Skip already downloaded
+        papers_to_download = [p for p in papers if not p.download_success and p.url_resolvable]
+    else:
+        papers_to_download = [p for p in papers if p.url_resolvable]
+    
+    if not papers_to_download:
+        click.echo("No papers to download.")
+    else:
+        click.echo(f"Downloading {len(papers_to_download)} papers...")
+        
+        async def download_all():
+            async with AccessibilityChecker(headless=headless) as checker:
+                for i, paper in enumerate(papers_to_download, 1):
+                    title_display = paper.title[:60] if paper.title else "untitled"
+                    click.echo(f"[{i}/{len(papers_to_download)}] Downloading: {title_display}...")
+                    updated = await checker.download_paper(paper, output_dir)
+                    # Update in main list
+                    for j, p in enumerate(papers):
+                        if p.id == updated.id:
+                            papers[j] = updated
+                            break
+                    if updated.download_success:
+                        click.echo(f"  → Downloaded to {updated.local_file_path}")
+                    else:
+                        click.echo(f"  → Download failed")
+        
+        asyncio.run(download_all())
+    
+    # Final CSV update
+    write_papers_csv(papers, csv_path)
+    click.echo(f"\n✓ Final CSV written to {csv_path}")
+    
+    # Summary statistics
+    total = len(papers)
+    public = sum(1 for p in papers if p.accessibility_status == AccessibilityStatus.PUBLIC)
+    restricted = sum(1 for p in papers if p.accessibility_status == AccessibilityStatus.RESTRICTED)
+    requires_login = sum(1 for p in papers if p.accessibility_status == AccessibilityStatus.REQUIRES_LOGIN)
+    downloaded = sum(1 for p in papers if p.download_success)
+    
+    click.echo(f"\n=== Summary ===")
+    click.echo(f"Total papers found: {total}")
+    click.echo(f"Public: {public}")
+    click.echo(f"Restricted: {restricted}")
+    click.echo(f"Requires login: {requires_login}")
+    click.echo(f"Successfully downloaded: {downloaded}")
+
+
 if __name__ == "__main__":
     main()
