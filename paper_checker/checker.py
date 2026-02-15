@@ -32,6 +32,160 @@ class AccessibilityChecker:
         self.timeout = timeout
         self.browser: Optional[Browser] = None
     
+    async def check_and_resolve(self, paper: Paper) -> Paper:
+        """
+        Check accessibility and resolve final URL following full redirect chain.
+        
+        This method:
+        - Follows all redirects to get final_resolved_url
+        - Sets url_resolvable based on whether URL can be reached
+        - Classifies accessibility_status (public/restricted/requires_login/paywalled/not_found/error/human_error)
+        - Distinguishes ResearchGate 403 as requires_login vs generic 403 as restricted
+        - Only flags paywalled when confident
+        
+        Args:
+            paper: Paper object to check
+            
+        Returns:
+            Updated paper with accessibility and resolution info
+        """
+        # Check for human error (file:/// paths)
+        if paper.url and paper.url.startswith('file:///'):
+            paper.accessibility_status = AccessibilityStatus.HUMAN_ERROR
+            paper.url_resolvable = False
+            paper.last_checked = datetime.now()
+            return paper
+        
+        if not paper.url and not paper.doi:
+            paper.accessibility_status = AccessibilityStatus.NOT_FOUND
+            paper.url_resolvable = False
+            paper.last_checked = datetime.now()
+            return paper
+        
+        # Try URL first, then DOI
+        url = paper.url or f"https://doi.org/{paper.doi}"
+        
+        if not self.browser:
+            await self._init_browser()
+        
+        try:
+            page = await self.browser.new_page()
+            
+            try:
+                response = await page.goto(url, timeout=self.timeout, wait_until="domcontentloaded")
+                
+                if not response:
+                    paper.accessibility_status = AccessibilityStatus.ERROR
+                    paper.url_resolvable = False
+                    paper.last_checked = datetime.now()
+                    return paper
+                
+                # Record final URL after redirects
+                final_url = page.url
+                paper.final_resolved_url = final_url
+                paper.url_resolvable = True
+                
+                status_code = response.status
+                
+                # Handle 404
+                if status_code == 404:
+                    paper.accessibility_status = AccessibilityStatus.NOT_FOUND
+                    paper.last_checked = datetime.now()
+                    return paper
+                
+                # Handle 403 - distinguish ResearchGate from others
+                if status_code == 403:
+                    if 'researchgate.net' in final_url.lower():
+                        paper.accessibility_status = AccessibilityStatus.REQUIRES_LOGIN
+                        paper.requires_authentication = True
+                        paper.authentication_service = "ResearchGate"
+                    else:
+                        paper.accessibility_status = AccessibilityStatus.RESTRICTED
+                    paper.last_checked = datetime.now()
+                    return paper
+                
+                # Handle 401
+                if status_code == 401:
+                    paper.accessibility_status = AccessibilityStatus.REQUIRES_LOGIN
+                    paper.requires_authentication = True
+                    paper.authentication_service = self._identify_auth_service(final_url)
+                    paper.last_checked = datetime.now()
+                    return paper
+                
+                # Wait a bit for dynamic content
+                await page.wait_for_timeout(2000)
+                
+                # Check for login requirements first (more specific than paywall)
+                if await self._check_login_required_browser(page):
+                    auth_service = self._identify_auth_service(final_url)
+                    paper.accessibility_status = AccessibilityStatus.REQUIRES_LOGIN
+                    paper.requires_authentication = True
+                    paper.authentication_service = auth_service
+                    paper.last_checked = datetime.now()
+                    return paper
+                
+                # Check for paywall - only flag if very confident
+                if await self._check_paywall_browser_confident(page):
+                    paper.accessibility_status = AccessibilityStatus.PAYWALLED
+                    paper.last_checked = datetime.now()
+                    return paper
+                
+                # Check for download links
+                download_url = await self._find_download_link_browser(page, final_url)
+                if download_url:
+                    paper.download_url = download_url
+                
+                # If we got here with 200 status, it's likely public
+                if status_code == 200:
+                    paper.accessibility_status = AccessibilityStatus.PUBLIC
+                else:
+                    paper.accessibility_status = AccessibilityStatus.RESTRICTED
+                
+                paper.last_checked = datetime.now()
+                return paper
+                
+            finally:
+                await page.close()
+                
+        except PlaywrightTimeout:
+            logger.error(f"Timeout accessing {url}")
+            paper.accessibility_status = AccessibilityStatus.ERROR
+            paper.url_resolvable = False
+            paper.last_checked = datetime.now()
+            return paper
+        except Exception as e:
+            logger.error(f"Error checking paper {paper.title}: {e}")
+            paper.accessibility_status = AccessibilityStatus.ERROR
+            paper.url_resolvable = False
+            paper.notes = f"Error: {str(e)}"
+            paper.last_checked = datetime.now()
+            return paper
+    
+    async def _check_paywall_browser_confident(self, page: Page) -> bool:
+        """
+        Check for paywall with high confidence - only flag if very sure.
+        
+        Looks for explicit purchase/subscription buttons, not just mentions.
+        """
+        try:
+            # Very specific paywall indicators
+            confident_paywall_selectors = [
+                "button:has-text('Purchase')",
+                "button:has-text('Buy article')",
+                "button:has-text('Subscribe to access')",
+                "a:has-text('Purchase this article')",
+                "[class*='purchase-button']",
+                "[id*='purchase-button']",
+            ]
+            
+            for selector in confident_paywall_selectors:
+                if await page.locator(selector).count() > 0:
+                    return True
+            
+            return False
+        except Exception:
+            return False
+    
     async def check_paper(self, paper: Paper, use_browser: bool = True) -> Paper:
         """
         Check accessibility of a paper.
