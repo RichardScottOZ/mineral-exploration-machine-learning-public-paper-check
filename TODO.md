@@ -36,7 +36,7 @@
 - [ ] Add DOI extraction from URLs (parse doi.org links, sciencedirect DOIs, etc.) and populate `doi` column
 - [ ] Add author extraction from page metadata (og:author, citation_author meta tags) during accessibility check
 - [x] Support resuming interrupted runs: if CSV exists and `--force` not set, skip already-processed entries
-- [ ] Add `--limit N` flag to process only first N papers (useful for testing)
+- [x] Add `--limit N` flag to process only first N papers (useful for testing)
 
 ---
 ## Completed

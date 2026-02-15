@@ -395,7 +395,8 @@ def export(db, output_file, output_format, status):
 @click.option("--headless/--no-headless", default=True, help="Run browser in headless mode")
 @click.option("--force", is_flag=True, help="Re-download already downloaded papers")
 @click.option("--csv", "csv_path", default="papers_download.csv", help="CSV file path for status tracking")
-def download(repo, output_dir, aggressive, headless, force, csv_path):
+@click.option("--limit", type=int, help="Process only first N papers (useful for testing)")
+def download(repo, output_dir, aggressive, headless, force, csv_path, limit):
     """
     Download papers from a GitHub repository README.
     
@@ -442,6 +443,11 @@ def download(repo, output_dir, aggressive, headless, force, csv_path):
         return
     
     click.echo(f"Found {len(papers)} paper/report/thesis entries from README.")
+    
+    # Apply limit if specified
+    if limit and limit > 0:
+        papers = papers[:limit]
+        click.echo(f"Limiting to first {len(papers)} papers")
     
     # Merge with existing data
     if existing_papers and not force:
