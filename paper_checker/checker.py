@@ -7,7 +7,7 @@ import logging
 import random
 import re
 from datetime import datetime
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from urllib.parse import urlparse, unquote
 
 import requests
@@ -107,6 +107,99 @@ class AccessibilityChecker:
             return doi_param_match.group(1)
         
         return None
+    
+    async def _extract_authors_from_page(self, page: Page) -> List[str]:
+        """
+        Extract authors from page metadata.
+        
+        Looks for:
+        - citation_author meta tags
+        - og:author meta tags
+        - author meta tags
+        - JSON-LD structured data
+        
+        Args:
+            page: Playwright page object
+            
+        Returns:
+            List of author names
+        """
+        authors = []
+        
+        try:
+            # Get page content
+            content = await page.content()
+            soup = BeautifulSoup(content, 'html.parser')
+            
+            # Method 1: citation_author meta tags (most common in academic papers)
+            citation_authors = soup.find_all('meta', attrs={'name': 'citation_author'})
+            for tag in citation_authors:
+                author = tag.get('content', '').strip()
+                if author and author not in authors:
+                    authors.append(author)
+            
+            # Method 2: og:author meta tags
+            if not authors:
+                og_authors = soup.find_all('meta', attrs={'property': 'og:author'})
+                for tag in og_authors:
+                    author = tag.get('content', '').strip()
+                    if author and author not in authors:
+                        authors.append(author)
+            
+            # Method 3: author meta tags
+            if not authors:
+                author_tags = soup.find_all('meta', attrs={'name': 'author'})
+                for tag in author_tags:
+                    author = tag.get('content', '').strip()
+                    if author and author not in authors:
+                        authors.append(author)
+            
+            # Method 4: JSON-LD structured data
+            if not authors:
+                json_ld_scripts = soup.find_all('script', attrs={'type': 'application/ld+json'})
+                for script in json_ld_scripts:
+                    try:
+                        import json
+                        data = json.loads(script.string)
+                        
+                        # Handle single object or array
+                        if isinstance(data, dict):
+                            data = [data]
+                        
+                        for item in data:
+                            if isinstance(item, dict):
+                                # Look for author field
+                                if 'author' in item:
+                                    author_data = item['author']
+                                    
+                                    # Handle array of authors
+                                    if isinstance(author_data, list):
+                                        for author in author_data:
+                                            if isinstance(author, dict) and 'name' in author:
+                                                name = author['name'].strip()
+                                                if name and name not in authors:
+                                                    authors.append(name)
+                                            elif isinstance(author, str):
+                                                name = author.strip()
+                                                if name and name not in authors:
+                                                    authors.append(name)
+                                    # Handle single author object
+                                    elif isinstance(author_data, dict) and 'name' in author_data:
+                                        name = author_data['name'].strip()
+                                        if name and name not in authors:
+                                            authors.append(name)
+                                    # Handle single author string
+                                    elif isinstance(author_data, str):
+                                        name = author_data.strip()
+                                        if name and name not in authors:
+                                            authors.append(name)
+                    except Exception:
+                        continue
+            
+        except Exception as e:
+            logger.debug(f"Error extracting authors: {e}")
+        
+        return authors
     
     async def check_and_resolve(self, paper: Paper) -> Paper:
         """
@@ -238,6 +331,12 @@ class AccessibilityChecker:
                 download_url = await self._find_download_link_browser(page, final_url)
                 if download_url:
                     paper.download_url = download_url
+                
+                # Extract authors from page metadata if not already set
+                if not paper.authors:
+                    authors = await self._extract_authors_from_page(page)
+                    if authors:
+                        paper.authors = authors
                 
                 # If we got here with 200 status, it's likely public
                 if status_code == 200:
