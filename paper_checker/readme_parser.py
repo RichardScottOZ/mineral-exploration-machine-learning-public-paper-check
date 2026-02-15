@@ -130,6 +130,73 @@ def _find_section_for_line(lines: List[str], line_idx: int) -> str:
     return ""
 
 
+def _build_section_path(lines: List[str], line_idx: int) -> str:
+    """
+    Build full section hierarchy path from markdown headings.
+    
+    Walks backwards from line_idx to collect all heading levels (#, ##, ###, ####)
+    and returns a path like "Prospectivity/Oceania/Australia/South_Australia".
+    
+    Args:
+        lines: All lines from the README
+        line_idx: Current line index
+        
+    Returns:
+        Full section path with "/" separators, ASCII-ized for filesystem safety
+    """
+    # Collect all headings with their levels
+    headings = []  # List of (level, text) tuples
+    
+    for i in range(line_idx, -1, -1):
+        stripped = lines[i].strip()
+        if stripped.startswith("#"):
+            # Count heading level
+            level = 0
+            for char in stripped:
+                if char == "#":
+                    level += 1
+                else:
+                    break
+            text = stripped.lstrip("#").strip()
+            headings.append((level, text))
+    
+    if not headings:
+        return ""
+    
+    # Reverse to get top-down order
+    headings.reverse()
+    
+    # Build hierarchy: only include headings that form a proper nesting
+    path_parts = []
+    last_level = 0
+    
+    for level, text in headings:
+        if level > last_level:
+            # Deeper level - add to path
+            path_parts.append(text)
+            last_level = level
+        elif level == last_level:
+            # Same level - replace last part
+            if path_parts:
+                path_parts[-1] = text
+            else:
+                path_parts.append(text)
+        else:
+            # Shallower level - pop back and add
+            while path_parts and last_level >= level:
+                path_parts.pop()
+                last_level -= 1
+            path_parts.append(text)
+            last_level = level
+    
+    # Join with "/" and ASCII-ize for filesystem safety
+    path = "/".join(path_parts)
+    # Replace spaces with underscores, remove special chars
+    path = re.sub(r'[^\w\s/\-]', '', path)
+    path = path.replace(" ", "_")
+    return path
+
+
 def _indent_level(line: str) -> int:
     """Calculate indentation level, normalizing tabs to 4 spaces."""
     raw = line.expandtabs(4)
@@ -218,6 +285,7 @@ def _extract_entries_from_line(
     """Extract zero or more Paper entries from a single README line."""
     results: List[Paper] = []
     section = _find_section_for_line(lines, idx)
+    section_path = _build_section_path(lines, idx)
 
     # --- Pattern 1: [paper](url), [Paper](url), [report](url), etc. ---
     for m in re.finditer(
@@ -238,6 +306,7 @@ def _extract_entries_from_line(
             url=url,
             resource_type=resource_type,
             keywords=[section] if section else [],
+            section_path=section_path,
         )
         results.append(paper)
 
@@ -261,6 +330,7 @@ def _extract_entries_from_line(
             url=url,
             resource_type=resource_type,
             keywords=[section] if section else [],
+            section_path=section_path,
         )
         results.append(paper)
 
@@ -285,13 +355,14 @@ def _extract_entries_from_line(
                 url=url,
                 resource_type=ResourceType.THESIS,
                 keywords=[section] if section else [],
+                section_path=section_path,
             )
             results.append(paper)
 
     # --- Pattern 4 & 5: Academic URLs not already captured ---
     # Collect URLs already found by patterns 1-3 so we don't duplicate them.
     seen = {p.url for p in results if p.url}
-    _extract_academic_urls(line, lines, idx, section, results, seen)
+    _extract_academic_urls(line, lines, idx, section, results, seen, section_path)
 
     return results
 
@@ -303,6 +374,7 @@ def _extract_academic_urls(
     section: str,
     results: List[Paper],
     seen: Optional[set] = None,
+    section_path: str = "",
 ) -> None:
     """Detect academic paper URLs that are not wrapped in [paper]/[report]/[thesis] labels.
 
@@ -358,6 +430,7 @@ def _extract_academic_urls(
             url=url,
             resource_type=ResourceType.PAPER,
             keywords=[section] if section else [],
+            section_path=section_path,
         )
         results.append(paper)
 
