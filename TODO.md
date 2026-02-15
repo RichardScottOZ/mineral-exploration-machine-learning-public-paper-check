@@ -29,13 +29,13 @@
 - [x] Add `--aggressive` flag to existing `paper-checker scan` command (default off for backward compat, on for download)
 - [x] Handle edge case: same paper in multiple sections creates separate CSV rows, each with correct section_path, all flagged via `duplicate_of`
 - [x] Add progress summary at end of run: total papers found, checked, public, restricted, downloaded, failed — printed to stdout
-- [ ] **HARD STOP** — Review before continuing to low priority
+- [x] **HARD STOP** — Review before continuing to low priority (All critical, high, and medium priority tasks completed successfully)
 
 ## Low Priority / Nice-to-Have
 
 - [ ] Add DOI extraction from URLs (parse doi.org links, sciencedirect DOIs, etc.) and populate `doi` column
 - [ ] Add author extraction from page metadata (og:author, citation_author meta tags) during accessibility check
-- [ ] Support resuming interrupted runs: if CSV exists and `--force` not set, skip already-processed entries
+- [x] Support resuming interrupted runs: if CSV exists and `--force` not set, skip already-processed entries
 - [ ] Add `--limit N` flag to process only first N papers (useful for testing)
 
 ---
