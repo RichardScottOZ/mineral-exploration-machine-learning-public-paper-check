@@ -186,6 +186,29 @@ def test_extract_parent_context_no_parent():
     assert url == ""
 
 
+def test_anchor_link_filtered():
+    """Test that GitHub anchor links (e.g. repo#section) are filtered out."""
+    readme = """\
+# Table of Contents
+* [Papers](https://github.com/RichardScottOZ/mineral-exploration-machine-learning#papers)
+"""
+    papers = parse_readme(readme)
+    assert papers == []
+
+
+def test_thesis_url_cleaned():
+    """Test that thesis URLs with markdown artifacts are cleaned."""
+    readme = """\
+# Ontology
+* [geosim](https://github.com/smolang/SemanticObjects/tree/geosim)
+\t* [https://www.duo.uio.no/handle/10852/111467](Knowledge Modelling) -> PhD thesis
+"""
+    papers = parse_readme(readme)
+    assert len(papers) == 1
+    assert papers[0].url == "https://www.duo.uio.no/handle/10852/111467"
+    assert "]" not in papers[0].url
+
+
 def test_default_repo_constants():
     """Test that default repo constants are set correctly."""
     assert DEFAULT_REPO_OWNER == "RichardScottOZ"

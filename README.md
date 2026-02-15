@@ -1,9 +1,10 @@
 # Mineral Exploration Machine Learning - Public Paper Check
 
-A comprehensive tool to check and manage the accessibility of academic papers, references, reports, and theses related to mineral exploration and machine learning. This tool helps researchers track which papers are publicly accessible and provides automated checking using browser automation.
+A tool to check and manage the accessibility of academic papers, references, reports, and theses from the [mineral-exploration-machine-learning](https://github.com/RichardScottOZ/mineral-exploration-machine-learning) repository. The tool automatically scans that repository's README to extract paper/report/thesis links, stores them in a local database, and checks their public accessibility.
 
 ## Features
 
+- 🔗 **GitHub README Scanning**: Automatically extracts paper/report/thesis links from the [mineral-exploration-machine-learning](https://github.com/RichardScottOZ/mineral-exploration-machine-learning) repository (or any other GitHub repository)
 - 📚 **Database Management**: Store paper information in SQLite database (offline and online compatible)
 - 🔍 **Accessibility Checking**: Automatically check if papers are publicly accessible
 - 🤖 **Browser Automation**: Use Playwright for automated checking with login support
@@ -45,9 +46,46 @@ pip install -e .
 
 ## Usage
 
+### Quick Start: Scan the Mineral Exploration ML Repository
+
+The primary use case is to scan the [mineral-exploration-machine-learning](https://github.com/RichardScottOZ/mineral-exploration-machine-learning) repository and check which papers are publicly accessible:
+
+```bash
+# Scan the default repository and import all paper/report/thesis entries
+paper-checker scan
+
+# Scan and also check accessibility of each paper
+paper-checker scan --check
+
+# Scan a different GitHub repository
+paper-checker scan --repo owner/repo-name
+
+# View the results
+paper-checker list
+
+# View statistics
+paper-checker stats
+```
+
 ### Command Line Interface
 
 The tool provides a comprehensive CLI for managing papers:
+
+#### Scan a Repository
+
+```bash
+# Scan the default mineral-exploration-machine-learning repository
+paper-checker scan
+
+# Scan with accessibility checking
+paper-checker scan --check
+
+# Scan a custom repository
+paper-checker scan --repo someuser/somerepo
+
+# Use a custom database file
+paper-checker scan --db my_papers.db
+```
 
 #### Add a Paper
 
@@ -111,10 +149,10 @@ paper-checker stats
 
 ```bash
 # Import from JSON
-paper-checker import data/sample_papers.json --format json
+paper-checker import-papers data/sample_papers.json --format json
 
 # Import from CSV
-paper-checker import data/sample_papers.csv --format csv
+paper-checker import-papers data/sample_papers.csv --format csv
 ```
 
 #### Export Papers
@@ -260,7 +298,7 @@ Sample papers are provided in the `data/` directory:
 
 Import them with:
 ```bash
-paper-checker import data/sample_papers.json --format json
+paper-checker import-papers data/sample_papers.json --format json
 ```
 
 ## Development
@@ -286,6 +324,7 @@ paper_checker/
 ├── models.py            # Data models (Paper, AccessibilityStatus, etc.)
 ├── database.py          # SQLite database operations
 ├── checker.py           # Accessibility checking logic
+├── readme_parser.py     # GitHub README parsing (extract paper/thesis/report links)
 └── cli.py              # Command-line interface
 
 data/

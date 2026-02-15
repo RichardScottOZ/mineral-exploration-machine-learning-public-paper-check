@@ -110,8 +110,9 @@ def _extract_parent_context(lines: List[str], line_idx: int) -> Tuple[str, str]:
             m = re.search(r'\[([^\]]+)\]\((https?://[^)]+)\)', line)
             if m:
                 return m.group(1), m.group(2)
-            # Parent has no link — use its text
+            # Parent has no link — use its text, cleaning markdown artifacts
             text = re.sub(r'^\s*[\*\-]\s*', '', line).strip()
+            text = re.sub(r'^\[|\]$', '', text).strip()
             return text, ""
     return "", ""
 
@@ -218,7 +219,8 @@ def _extract_entries_from_line(
     if re.search(r'(?:thesis|theses|phd)', line, re.IGNORECASE) and not results:
         urls = re.findall(r'(https?://\S+)', line)
         for raw_url in urls:
-            url = raw_url.rstrip(')').rstrip(',')
+            # Clean markdown artifacts and trailing punctuation from URLs
+            url = re.sub(r'[\]\)>,;]+.*$', '', raw_url).rstrip(',')
             # Try to extract a markdown-linked title
             title_match = re.search(r'\[([^\]]+)\]\(' + re.escape(raw_url), line)
             if title_match:
