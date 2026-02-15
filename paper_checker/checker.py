@@ -4,6 +4,7 @@ Paper accessibility checker using various strategies.
 
 import asyncio
 import logging
+import random
 from datetime import datetime
 from typing import Optional, Dict, Any
 from urllib.parse import urlparse
@@ -31,6 +32,42 @@ class AccessibilityChecker:
         self.headless = headless
         self.timeout = timeout
         self.browser: Optional[Browser] = None
+        self.domain_delays: Dict[str, float] = {}  # Track delays per domain for adaptive backoff
+        self.base_delay = (3.0, 7.0)  # Base random jitter range in seconds
+    
+    async def _rate_limit(self, url: str):
+        """
+        Apply rate limiting with random jitter and adaptive backoff.
+        
+        Args:
+            url: URL being accessed (used to track per-domain delays)
+        """
+        domain = urlparse(url).netloc
+        
+        # Get delay for this domain (or use base delay)
+        if domain in self.domain_delays:
+            delay = self.domain_delays[domain]
+        else:
+            delay = random.uniform(*self.base_delay)
+        
+        await asyncio.sleep(delay)
+    
+    def _handle_rate_limit_response(self, url: str, status_code: int):
+        """
+        Handle rate limit responses by increasing delay for domain.
+        
+        Args:
+            url: URL that returned rate limit
+            status_code: HTTP status code (429 or 503)
+        """
+        domain = urlparse(url).netloc
+        
+        # Double the delay for this domain
+        current_delay = self.domain_delays.get(domain, self.base_delay[1])
+        new_delay = min(current_delay * 2, 60.0)  # Cap at 60 seconds
+        self.domain_delays[domain] = new_delay
+        
+        logger.warning(f"Rate limited by {domain} (status {status_code}), backing off to {new_delay:.1f}s delay")
     
     async def check_and_resolve(self, paper: Paper) -> Paper:
         """
@@ -65,6 +102,9 @@ class AccessibilityChecker:
         # Try URL first, then DOI
         url = paper.url or f"https://doi.org/{paper.doi}"
         
+        # Apply rate limiting
+        await self._rate_limit(url)
+        
         if not self.browser:
             await self._init_browser()
         
@@ -81,6 +121,19 @@ class AccessibilityChecker:
                     return paper
                 
                 # Record final URL after redirects
+                final_url = page.url
+                paper.final_resolved_url = final_url
+                paper.url_resolvable = True
+                
+                status_code = response.status
+                
+                # Handle rate limiting
+                if status_code in (429, 503):
+                    self._handle_rate_limit_response(url, status_code)
+                    paper.accessibility_status = AccessibilityStatus.ERROR
+                    paper.notes = f"Rate limited (status {status_code})"
+                    paper.last_checked = datetime.now()
+                    return paper
                 final_url = page.url
                 paper.final_resolved_url = final_url
                 paper.url_resolvable = True
@@ -486,6 +539,9 @@ class AccessibilityChecker:
         
         url = paper.final_resolved_url or paper.url
         
+        # Apply rate limiting
+        await self._rate_limit(url)
+        
         if not self.browser:
             await self._init_browser()
         
@@ -517,20 +573,37 @@ class AccessibilityChecker:
                     filepath = section_dir / filename
                     
                     response = await page.goto(url, timeout=self.timeout)
-                    if response and response.status == 200:
-                        # Save PDF
-                        content = await response.body()
-                        with open(filepath, 'wb') as f:
-                            f.write(content)
+                    if response:
+                        # Handle rate limiting
+                        if response.status in (429, 503):
+                            self._handle_rate_limit_response(url, response.status)
+                            paper.download_success = False
+                            return paper
                         
-                        paper.local_file_path = str(filepath)
-                        paper.download_success = True
-                        return paper
+                        if response.status == 200:
+                            # Save PDF
+                            content = await response.body()
+                            with open(filepath, 'wb') as f:
+                                f.write(content)
+                            
+                            paper.local_file_path = str(filepath)
+                            paper.download_success = True
+                            return paper
                 else:
                     # Landing page - try to find PDF link
                     response = await page.goto(url, timeout=self.timeout, wait_until="domcontentloaded")
                     
-                    if not response or response.status != 200:
+                    if not response:
+                        paper.download_success = False
+                        return paper
+                    
+                    # Handle rate limiting
+                    if response.status in (429, 503):
+                        self._handle_rate_limit_response(url, response.status)
+                        paper.download_success = False
+                        return paper
+                    
+                    if response.status != 200:
                         paper.download_success = False
                         return paper
                     
