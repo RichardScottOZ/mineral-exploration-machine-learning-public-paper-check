@@ -5,9 +5,10 @@ Paper accessibility checker using various strategies.
 import asyncio
 import logging
 import random
+import re
 from datetime import datetime
 from typing import Optional, Dict, Any
-from urllib.parse import urlparse
+from urllib.parse import urlparse, unquote
 
 import requests
 from bs4 import BeautifulSoup
@@ -69,6 +70,44 @@ class AccessibilityChecker:
         
         logger.warning(f"Rate limited by {domain} (status {status_code}), backing off to {new_delay:.1f}s delay")
     
+    def _extract_doi_from_url(self, url: str) -> Optional[str]:
+        """
+        Extract DOI from URL.
+        
+        Handles:
+        - doi.org links: https://doi.org/10.1016/j.oregeorev.2020.103654
+        - ScienceDirect: https://www.sciencedirect.com/science/article/pii/S0169136820303863
+        - Embedded DOIs in URLs: /doi/10.1234/example
+        
+        Args:
+            url: URL to extract DOI from
+            
+        Returns:
+            DOI string if found, None otherwise
+        """
+        if not url:
+            return None
+        
+        # Decode URL-encoded characters
+        url = unquote(url)
+        
+        # Pattern 1: doi.org links
+        doi_org_match = re.search(r'doi\.org/(10\.\d{4,}/[^\s\?&#]+)', url)
+        if doi_org_match:
+            return doi_org_match.group(1)
+        
+        # Pattern 2: /doi/ in path
+        doi_path_match = re.search(r'/doi/(10\.\d{4,}/[^\s\?&#]+)', url)
+        if doi_path_match:
+            return doi_path_match.group(1)
+        
+        # Pattern 3: DOI as query parameter
+        doi_param_match = re.search(r'[?&]doi=(10\.\d{4,}/[^\s\?&#]+)', url)
+        if doi_param_match:
+            return doi_param_match.group(1)
+        
+        return None
+    
     async def check_and_resolve(self, paper: Paper) -> Paper:
         """
         Check accessibility and resolve final URL following full redirect chain.
@@ -102,6 +141,12 @@ class AccessibilityChecker:
         # Try URL first, then DOI
         url = paper.url or f"https://doi.org/{paper.doi}"
         
+        # Extract DOI from URL if not already set
+        if not paper.doi and paper.url:
+            extracted_doi = self._extract_doi_from_url(paper.url)
+            if extracted_doi:
+                paper.doi = extracted_doi
+        
         # Apply rate limiting
         await self._rate_limit(url)
         
@@ -124,6 +169,12 @@ class AccessibilityChecker:
                 final_url = page.url
                 paper.final_resolved_url = final_url
                 paper.url_resolvable = True
+                
+                # Extract DOI from URL if not already set
+                if not paper.doi:
+                    extracted_doi = self._extract_doi_from_url(final_url)
+                    if extracted_doi:
+                        paper.doi = extracted_doi
                 
                 status_code = response.status
                 
